@@ -263,3 +263,41 @@ The **Tablo** tab (it appears when the cursor is in a table) gained:
 - **Testing:** smoke steps `pagenum` (labels, spec, PDF, Word round trip in
   both positions, go to page) and `hfdialog`, plus unit tests for the flag
   mapping.
+
+## 0.11.0: Real Turkish spell checking (iteration 10)
+
+- **Bug found and fixed: spell checking never worked.** To keep egUDF
+  offline, Chromium was blocked from downloading its dictionaries, but none
+  were shipped, so no dictionary ever loaded. Whether any red underlines
+  appeared depended on Windows having its own Turkish spellchecker.
+- **Now:**
+  - egUDF ships the Turkish (MIT, Harun Reşit Zafer) and English Hunspell
+    dictionaries and checks words with real Hunspell running inside the app.
+  - Nothing leaves the computer.
+  - It accepts legal vocabulary (müvekkil, ihtiyati, ilamsız, tensip,
+    temerrüt, müzekkere, istinaf, and arabuluculuk/talikli, which I added).
+- **Turkish-aware suggestions** for typical keyboard errors:
+  - mahkme → mahkeme, yanlızca → yalnızca, birsey → bir şey,
+    musteri → müşteri.
+  - Covers ASCII letters for Turkish ones, swapped/missing/extra letters, and
+    a missing space.
+- **Fewer false alarms:**
+  - ALL-CAPS abbreviations (HMK, İİK, TBMM) are skipped (can be switched
+    off).
+  - Also skipped: words with digits, numbers like 2024/15, e-mails and web
+    addresses, UYAP form fields and deleted (tracked) text.
+  - "Ankara'da" is checked as "Ankara".
+  - The word being typed isn't underlined until you leave it.
+- **F7 / Gözden Geçir → Yazım denetimi:** a Word-style walk-through. Shows
+  each error in context with suggestions; Değiştir, Tümünü değiştir, Yoksay,
+  Tümünü yoksay, Sözlüğe ekle.
+- **Right-click** on an underlined word: suggestions, Tümünü yoksay,
+  Sözlüğe ekle.
+- **Status bar** shows "Türkçe · 3 yazım hatası". Click it to choose the
+  dictionaries (Türkçe / İngilizce), the ALL-CAPS option, or the
+  **Kullanıcı sözlüğü** (view, add and remove your own words).
+- Comment boxes and the UYAP window also get a working Turkish spellchecker
+  (the dictionaries are installed for Chromium too).
+- **Testing:** smoke steps `spelling` and `spelling-ui` (detection,
+  suggestions, typing behaviour, right-click, F7 change / ignore-all). The
+  packaging test made sure the new spell service is in the installer.

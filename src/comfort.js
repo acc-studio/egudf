@@ -23,9 +23,10 @@ export function themeMenu(app, anchor) {
 const at = (x, y) => ({ getBoundingClientRect: () => ({ left: x, right: x, top: y, bottom: y, width: 0, height: 0 }) });
 
 /** Builds the right-click menu from Chromium's context params (spelling, edit flags). */
-export function contextMenu(app, p) {
+export async function contextMenu(app, p) {
   const ed = app.ed();
   const items = [];
+  if (!p.misspelledWord && ed && p.isEditable) items.push(...((await app.spellItems?.(ed, p)) || []));
   if (p.misspelledWord) {
     for (const s of p.suggestions) items.push({ html: `<b>${esc(s)}</b>`, onClick: () => native.edit('replaceMisspelling', s) });
     if (!p.suggestions.length) items.push({ html: '<span class="dim">Öneri yok</span>' });

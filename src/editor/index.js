@@ -11,6 +11,7 @@ import {
 } from './extensions.js';
 import { Pagination } from './pagination.js';
 import { AutoCorrect } from './autocorrect.js';
+import { Spell } from './spell.js';
 import { CommentMark } from '../review/comments.js';
 import { InsertionMark, DeletionMark, FormatChangeMark, TrackChanges } from '../review/changes.js';
 
@@ -69,6 +70,7 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       Search,
       TrackChanges,
       AutoCorrect,
+      Spell,
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],
     editorProps: {

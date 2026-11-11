@@ -10,8 +10,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectDrivers, listCertificates, signContent, friendlyError } from './sign/pkcs11.js';
 import { verifyDetached } from './sign/verify.js';
+import { createSpellService } from './lib/spellcheck.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Spellcheck with the bundled Hunspell dictionaries in the renderer, not the
+// Windows platform checker: only then can the editor ask about single words
+// (webFrame.isWordMisspelled) and draw its own underlines.
+app.commandLine.appendSwitch('disable-features', 'WinUseBrowserSpellChecker');
 const argv = process.argv.slice(app.isPackaged ? 1 : 2);
 const flag = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? (argv.includes(`--${name}`) ? '' : null);
 const SMOKE = flag('smoke');
@@ -95,14 +100,42 @@ function createWindow() {
 
 // Spellcheck uses the OS checker (Windows/macOS); Hunspell downloads are
 // pointed at a dead local URL so nothing is fetched from Google.
+// Chromium looks for <userData>/Dictionaries/<lang>.bdic before downloading, so
+// the Turkish and English Hunspell dictionaries shipped in assets/ are copied
+// there (without them no dictionary ever loaded: the download is blocked).
+function installDictionaries() {
+  try {
+    const src = path.join(__dirname, 'assets', 'dictionaries');
+    const dst = path.join(app.getPath('userData'), 'Dictionaries');
+    fs.mkdirSync(dst, { recursive: true });
+    for (const f of fs.readdirSync(src)) {
+      const to = path.join(dst, f);
+      const size = fs.statSync(path.join(src, f)).size;
+      if (!fs.existsSync(to) || fs.statSync(to).size !== size) fs.copyFileSync(path.join(src, f), to);
+    }
+  } catch (e) { console.error('dictionaries:', e.message); }
+}
+
 function setupSpellcheck(ses) {
+  installDictionaries();
   try {
     ses.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/');
     const avail = ses.availableSpellCheckerLanguages || [];
-    const langs = ['tr', 'tr-TR', 'en-US', 'en-GB'].filter((l) => avail.includes(l));
+    const langs = ['tr', 'en-US'].filter((l) => avail.includes(l));
     if (langs.length) ses.setSpellCheckerLanguages(langs);
   } catch { /* macOS: language choice is automatic */ }
 }
+
+// editor spell checking: Hunspell (WASM) with the bundled dictionaries
+let spellSvc = null;
+const spell = () => (spellSvc ??= createSpellService({ assetsDir: path.join(__dirname, 'assets', 'hunspell'), userFile: path.join(app.getPath('userData'), 'dictionary.txt') }));
+ipcMain.handle('spell:check', (_e, words) => spell().check(words));
+ipcMain.handle('spell:suggest', (_e, w) => spell().suggest(w));
+ipcMain.handle('spell:add', async (e, w) => { await spell().addWord(w); try { e.sender.session.addWordToSpellCheckerDictionary(String(w)); } catch {} });
+ipcMain.handle('spell:remove', async (e, w) => { await spell().removeWord(w); try { e.sender.session.removeWordFromSpellCheckerDictionary(String(w)); } catch {} });
+ipcMain.handle('spell:words', () => spell().words());
+ipcMain.handle('spell:langs', () => spell().langs());
+ipcMain.handle('spell:setLangs', (_e, langs) => spell().setLangs(langs));
 
 // The main window draws its own context menu (spelling + table + review
 // actions); everything else (UYAP window) keeps the native one.

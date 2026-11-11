@@ -21,6 +21,16 @@ contextBridge.exposeInMainWorld('native', {
   readText: () => ipcRenderer.invoke('clipboard:readText'),
   edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
   setTheme: (t) => ipcRenderer.invoke('theme:set', t),
+  // Hunspell (main process); the editor draws its own underlines
+  spell: {
+    check: (words) => ipcRenderer.invoke('spell:check', words),
+    suggest: (w) => ipcRenderer.invoke('spell:suggest', w),
+    add: (w) => ipcRenderer.invoke('spell:add', w),
+    remove: (w) => ipcRenderer.invoke('spell:remove', w),
+    words: () => ipcRenderer.invoke('spell:words'),
+    langs: () => ipcRenderer.invoke('spell:langs'),
+    setLangs: (l) => ipcRenderer.invoke('spell:setLangs', l),
+  },
   onContextMenu: on('context-menu'),
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),

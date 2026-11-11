@@ -172,6 +172,23 @@ body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar {
 .hf-pn select, .hf-pn input[type=number] { width: 100%; }
 .hf-pn label.inline { display: flex; align-items: center; gap: 5px; height: 30px; font-weight: 400; }
 #sb-page { cursor: pointer; }
+#sb-lang { cursor: pointer; }
+#sb-lang.errs::after { content: attr(data-errs); margin-left: 6px; color: var(--danger); font-weight: 600; }
+.udf-doc .spell-err { text-decoration: underline wavy #d93025; text-decoration-skip-ink: none; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.udf-doc ins.udf-ins .spell-err, .udf-doc .spell-err ins.udf-ins { text-decoration: underline wavy #d93025; }
+.sp-ctx { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2, rgba(0,0,0,.03)); font-family: 'Times New Roman', serif; font-size: 15px; line-height: 1.5; min-height: 46px; margin-bottom: 10px; }
+.sp-ctx mark { background: rgba(217,48,37,.15); color: #b3261e; text-decoration: underline wavy #d93025; border-radius: 2px; }
+.sp-cols { display: flex; gap: 10px; }
+.sp-list { flex: 1; height: 150px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; outline: none; }
+.sp-s { padding: 4px 8px; border-radius: 5px; cursor: pointer; }
+.sp-s:hover { background: var(--hover, rgba(0,0,0,.05)); }
+.sp-s.sel { background: var(--accent-soft, rgba(37,99,235,.14)); color: var(--accent); font-weight: 600; }
+.sp-btns { display: flex; flex-direction: column; gap: 6px; width: 150px; }
+.sp-btns .btn { width: 100%; }
+.dc-list { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.dc-w { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 2px 8px; border-radius: 5px; }
+.dc-w:hover { background: var(--hover, rgba(0,0,0,.05)); }
+@media print { .udf-doc .spell-err { text-decoration: none; } }
 
 /* ---------- The document ---------- */
 .udf-doc { outline: none; font-family: inherit; font-size: inherit; color: #000; white-space: pre-wrap; word-wrap: break-word; tab-size: 36pt; -moz-tab-size: 36pt; caret-color: #000; min-height: 100%; position: relative; z-index: 1; }

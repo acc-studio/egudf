@@ -17,6 +17,7 @@ import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
+import { setupSpell, applySpellSettings, spellDialog, spellLangMenu, dictionaryDialog, spellMenuItems, restoreSpellLangs, spellAvailable, settle } from './spelling.js';
 import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from './udf/pagenum.js';
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
@@ -102,7 +103,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     onUpdate: (_e, tr) => onDocChange(tab, tr),
     onSelection: () => { if (tab === app.active) scheduleUI(); },
   });
-  if (app.spell === false) tab.editor.view.dom.setAttribute('spellcheck', 'false');
+  setupSpell(app, tab);
   Object.assign(tab.editor.storage.autocorrect, app.ac);
   tab.ruler = createRuler(app, tab);
   tab.ruler.setVisible(app.showRuler);
@@ -955,12 +956,16 @@ async function runCmd(name, arg, el) {
     case 'spellcheck': {
       app.spell = !app.spell;
       localStorage.setItem('udf.spell', app.spell ? '1' : '0');
-      for (const t of app.tabs) t.editor.view.dom.setAttribute('spellcheck', String(app.spell));
+      if (spellAvailable()) applySpellSettings(app);
+      else for (const t of app.tabs) t.editor.view.dom.setAttribute('spellcheck', String(app.spell));
       toast(app.spell ? 'Yazım denetimi açık' : 'Yazım denetimi kapalı', { ms: 1400 });
       scheduleUI();
       return;
     }
     case 'shortcuts': shortcutsDialog(); return;
+    case 'spellDialog': spellDialog(app); return;
+    case 'spellLangMenu': spellLangMenu(app, el); return;
+    case 'dictionary': dictionaryDialog(app); return;
     case 'themeMenu': themeMenu(app, el); return;
     case 'theme': setTheme(app, arg); return;
 
@@ -1391,6 +1396,7 @@ function refreshUI() {
   sb.innerHTML = `${icon(ic)}${esc(s ? (s.state === 'valid' ? 'İmzalı' : s.state === 'stale' ? 'İmza eski' : 'İmza hatalı') : 'İmzasız')}`;
   const page = pageOfPos(tab.editor.view, tab.editor.state.selection.from);
   $('#sb-page').textContent = `Sayfa ${Math.min(page, tab.pages)} / ${tab.pages}`;
+  { const n = tab.editor.storage.udfSpell?.enabled ? tab.editor.storage.udfSpell.errors.length : 0; const el = $('#sb-lang'); el.classList.toggle('errs', n > 0); el.dataset.errs = n ? `· ${n} yazım hatası` : ''; }
   clearTimeout(wcTimer);
   wcTimer = setTimeout(() => {
     if (app.active !== tab) return;
@@ -1420,6 +1426,13 @@ function wireChrome() {
     return [{ label: 'Yeni yorum', icon: 'comment', kbd: 'Ctrl+Alt+M', onClick: () => runCmd('commentNew') }, ...(ids.length ? [{ label: 'Yorumu sil', icon: 'reject', onClick: () => runCmd('commentDelete') }] : [])];
   });
   app.spell = localStorage.getItem('udf.spell') !== '0';
+  app.spellSkipCaps = localStorage.getItem('udf.spellCaps') !== '0';
+  app.spellCache = new Map();
+  app.scheduleUI = scheduleUI;
+  app.spellItems = (ed, p) => spellMenuItems(app, ed, p);
+  restoreSpellLangs();
+  $('#sb-lang').onclick = (e) => spellLangMenu(app, e.currentTarget);
+  $('#sb-lang').title = 'Yazım denetimi dili ve seçenekleri';
   app.showRuler = localStorage.getItem('udf.ruler') !== '0';
   setInterval(() => autosave(), 30000);
   app.changeItems = (t) => changeList(t.editor.state.doc);
@@ -1491,6 +1504,7 @@ function wireChrome() {
     if (e.key === 'Escape' && !$('#findbar').classList.contains('hidden')) { closeFind(); return; }
     if (e.key === 'Escape' && app.painter) { stopPainter(app); return; }
     if (e.key === 'F1') { e.preventDefault(); runCmd('shortcuts'); return; }
+    if (e.key === 'F7' && app.ed()) { e.preventDefault(); runCmd('spellDialog'); return; }
     if (e.key === 'F3' && e.shiftKey && app.ed()) { e.preventDefault(); runCmd('cycleCase'); return; }
     if (!mod) return;
     if (e.shiftKey && !e.altKey && app.ed() && (k === 'c' || k === 'v') && app.ed().view.hasFocus()) {
@@ -1565,7 +1579,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1776,6 +1790,78 @@ window.__smoke = {
         t.dirty = false;
         return r;
       }
+      case 'spelling': {
+        const r = {};
+        const probe = ['mahkeme', 'mahkme', 'davacı', 'Davacının', 'teh', 'the', 'müvekkilimiz', 'ihtiyati', 'haciz', 'ilamsız', 'tensip', 'bilirkişi', 'temerrüt', 'vekaletname', 'arabuluculuk', 'talikli', 'yanlızca', 'birsey', 'müzekkere', 'istinaf'];
+        r.flagged = (await native.spell.check(probe)).join(',');
+        r.sugg = { mahkme: (await native.spell.suggest('mahkme')).slice(0, 3).join(','), yanlızca: (await native.spell.suggest('yanlızca'))[0], birsey: (await native.spell.suggest('birsey'))[0], musteri: (await native.spell.suggest('musteri'))[0] };
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: "Davacı vekili mahkmeye başvurdu. HMK uyarınca Ankara'da 2024/15 sayılı dava açıldı, tebligat yapıldı. Davacı mahkmeye tekrar başvurdu." }] }] });
+        ed.commands.setTextSelection(1);
+        ed.commands.refreshSpelling();
+        await settle(ed.storage.udfSpell);
+        await wait(100);
+        const errs = () => ed.storage.udfSpell.errors.map((e) => e.word);
+        r.errors = errs().join(',');
+        r.decorated = ed.view.dom.querySelectorAll('.spell-err').length;
+        r.native = ed.view.dom.getAttribute('spellcheck');
+        // right-click on the first one
+        const first = ed.storage.udfSpell.errors[0];
+        const c = first && ed.view.coordsAtPos(first.from + 2);
+        r.menu = c ? (await spellMenuItems(app, ed, { x: c.left, y: (c.top + c.bottom) / 2 })).filter((i) => i.html).length : 0;
+        // the word being typed isn't underlined until the cursor leaves it
+        const end = ed.state.doc.content.size - 1;
+        ed.commands.setTextSelection(end);
+        ed.commands.insertContent(' yanlızca');
+        await wait(700);
+        await settle(ed.storage.udfSpell);
+        r.whileTyping = errs().includes('yanlızca');
+        ed.commands.setTextSelection(1);
+        await wait(100);
+        await settle(ed.storage.udfSpell);
+        r.afterLeaving = errs().includes('yanlızca');
+        // F7 dialog: change the first, ignore-all the second word
+        await spellDialog(app);
+        const api = app.spellDialogApi;
+        await api.ready;
+        r.dialogWord = api.current?.word;
+        r.suggestion = $('#sp-to').value;
+        api.body.querySelector('[data-a="change"]').click();
+        await wait(300);
+        r.afterChange = ed.state.doc.textContent.includes('vekili mahkemeye başvurdu');
+        r.next = api.current?.word;
+        api.body.querySelector('[data-a="ignoreAll"]').click();
+        await wait(300);
+        r.next2 = api.current?.word;
+        api.body.querySelector('[data-a="change"]').click();
+        await wait(300);
+        r.fixed2 = ed.state.doc.textContent.includes('yalnızca');
+        r.done = /tamamlandı/.test($('#sp-ctx').textContent);
+        r.remaining = errs().length;
+        r.ok = r.flagged === 'mahkme,teh,yanlızca,birsey' && r.sugg.mahkme.startsWith('mahkeme') && r.sugg.yanlızca === 'yalnızca' && r.sugg.birsey === 'bir şey' && r.sugg.musteri === 'müşteri'
+          && r.errors === 'mahkmeye,mahkmeye' && r.decorated === 2 && r.native === 'false' && r.menu >= 1 && !r.whileTyping && r.afterLeaving
+          && r.dialogWord === 'mahkmeye' && r.suggestion === 'mahkemeye' && r.afterChange && r.next === 'mahkmeye' && r.next2 === 'yanlızca' && r.fixed2 && r.done && r.remaining === 0;
+        t.dirty = false;
+        return r;
+      }
+      case 'spelling-ui': {
+        $('#modal-root').innerHTML = '';
+        const t = newDocument('blank');
+        await wait(200);
+        t.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: 'Müvekkilimiz yanlızca kira alacağı için icra takibi başlatmış, borçlu birsey ödememiştir. Musteri hizmetleri ile görüşülmüştür. HMK m. 107 uyarınca belirsiz alacak davası açılmıştır.' }] }] });
+        t.editor.commands.setTextSelection(1);
+        t.editor.commands.refreshSpelling();
+        await settle(t.editor.storage.udfSpell);
+        await wait(150);
+        const n = t.editor.storage.udfSpell.errors.length;
+        await spellDialog(app);
+        await app.spellDialogApi.ready;
+        await wait(200);
+        t.dirty = false;
+        return { ok: n === 3 && $$('.sp-s').length > 0, n, words: t.editor.storage.udfSpell.errors.map((e) => e.word) };
+      }
       case 'hfdialog': { const t = app.tab(); headerFooterDialog(t, 'footer'); await wait(300); const ok = !!document.querySelector('#hf-pn') && $('#hf-fmt').value === 'nN'; return { ok }; }
       case 'fmttrack': {
         const t = newDocument('blank');
@@ -1941,7 +2027,7 @@ window.__smoke = {
       case 'ctxmenu': {
         const ed = app.ed();
         ed.commands.focus();
-        contextMenu(app, { x: 520, y: 420, isEditable: true, selectionText: '', misspelledWord: 'mahkme', suggestions: ['mahkeme', 'mahkum'], canCut: false, canCopy: false, canPaste: true });
+        await contextMenu(app, { x: 520, y: 420, isEditable: true, selectionText: '', misspelledWord: 'mahkme', suggestions: ['mahkeme', 'mahkum'], canCut: false, canCopy: false, canPaste: true });
         await wait(100);
         const n = document.querySelectorAll('.menu .mi').length;
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

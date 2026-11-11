@@ -82,7 +82,7 @@ const TABS = {
     group('Değişiklikler', `<span class="split vsplit">${big('acceptChange', 'accept', 'Kabul et', { cls: 'okc' })}<button class="rb" data-cmd="acceptMenu" title="Kabul seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + `<span class="split vsplit">${big('rejectChange', 'reject', 'Reddet', { cls: 'badc' })}<button class="rb" data-cmd="rejectMenu" title="Ret seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + col(btn('changePrev', 'chevron', 'Önceki değişiklik', { label: 'Önceki', cls: 'flip' }), btn('changeNext', 'chevron', 'Sonraki değişiklik', { label: 'Sonraki' }))),
-    group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' }) + big('autocorrectDialog', 'check', 'Otomatik<br>düzeltme', { title: 'Otomatik düzeltme seçenekleri' })),
+    group('Yazım', big('spellDialog', 'spell', 'Yazım<br>denetimi', { title: 'Yazım hatalarını tek tek gözden geçir (F7)' }) + col(btn('spellcheck', 'check', 'Yazarken yazım hatalarını göster', { label: 'Hataları göster' }), btn('spellLangMenu', 'globe', 'Sözlük dilleri ve seçenekler', { label: 'Dil…' }), btn('dictionary', 'template', 'Sözlüğe eklediğiniz sözcükler', { label: 'Sözlük…' })) + big('autocorrectDialog', 'check', 'Otomatik<br>düzeltme', { title: 'Otomatik düzeltme seçenekleri' })),
   ],
   view: () => [
     group('Göster', big('ruler', 'ruler', 'Cetvel') + big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
