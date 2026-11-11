@@ -226,6 +226,20 @@ ipcMain.handle('recovery:list', () => {
     }).filter(Boolean);
   } catch { return []; }
 });
+// user templates (Şablon olarak kaydet)
+const tplDir = () => path.join(app.getPath('userData'), 'templates');
+ipcMain.handle('templates:list', () => {
+  try {
+    return fs.readdirSync(tplDir()).filter((n) => n.endsWith('.json')).map((n) => {
+      try { const d = JSON.parse(fs.readFileSync(path.join(tplDir(), n), 'utf8')); return { id: n.slice(0, -5), ...d }; } catch { return null; }
+    }).filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'));
+  } catch { return []; }
+});
+ipcMain.handle('templates:write', (_e, id, json) => {
+  fs.mkdirSync(tplDir(), { recursive: true });
+  fs.writeFileSync(path.join(tplDir(), `${String(id).replace(/[^\w-]/g, '')}.json`), json);
+});
+ipcMain.handle('templates:delete', (_e, id) => { try { fs.unlinkSync(path.join(tplDir(), `${String(id).replace(/[^\w-]/g, '')}.json`)); } catch {} });
 ipcMain.handle('theme:set', (_e, t) => {
   if (!['light', 'dark', 'system'].includes(t)) return null;
   nativeTheme.themeSource = t;

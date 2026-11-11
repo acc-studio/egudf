@@ -8,7 +8,8 @@ import { mergeTemplateData } from './udf/template-data.js';
 import { TEMPLATES, BLOCKS } from './udf/templates.js';
 import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes } from './udf/common.js';
 import { icon } from './icons.js';
-import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate } from './ui.js';
+import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate, promptBox } from './ui.js';
+import { DEFAULT_AUTOCORRECT } from './editor/autocorrect.js';
 import { createRibbon, PARA_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
 import { commentsAt } from './review/comments.js';
@@ -100,6 +101,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     onSelection: () => { if (tab === app.active) scheduleUI(); },
   });
   if (app.spell === false) tab.editor.view.dom.setAttribute('spellcheck', 'false');
+  Object.assign(tab.editor.storage.autocorrect, app.ac);
   tab.ruler = createRuler(app, tab);
   tab.ruler.setVisible(app.showRuler);
   applyGeometry(tab);
@@ -393,16 +395,34 @@ function wireStart(root, after) {
   root.querySelector('[data-act=open]')?.addEventListener('click', () => { after?.(); runCmd('open'); });
 }
 
+async function renderUserTemplates(el, after) {
+  const list = await native.templates.list();
+  if (!list.length) { el.innerHTML = '<h2>Şablonlarım</h2><div class="nav-empty">Bir belgeyi Ekle → Şablon olarak kaydet ile buraya ekleyin.</div>'; return; }
+  el.innerHTML = `<h2>Şablonlarım</h2><div class="tpl-grid">${list.map((t) => `<div class="tpl user-tpl" data-utpl="${esc(t.id)}"><div class="thumb"><div class="page"><i class="c"></i><i></i><i class="s"></i><i></i><i></i></div></div><div class="meta"><b>${esc(t.name)}</b><span>${esc(fmtDate(t.at, false))}</span></div><button class="tpl-del icon-btn" title="Şablonu sil">${icon('close')}</button></div>`).join('')}</div>`;
+  el.onclick = async (e) => {
+    const card = e.target.closest('[data-utpl]');
+    if (!card) return;
+    const t = list.find((x) => x.id === card.dataset.utpl);
+    if (e.target.closest('.tpl-del')) {
+      if (await confirmBox({ title: 'Şablonu sil', text: `"${esc(t.name)}" şablonu silinsin mi?`, ok: 'Sil', kind: 'danger' })) { await native.templates.remove(t.id); renderUserTemplates(el, after); }
+      return;
+    }
+    after?.();
+    newTab({ title: t.name, doc: t.doc, meta: JSON.parse(JSON.stringify(t.meta)) });
+  };
+}
+
 function renderWelcome() {
   const w = $('#welcome');
   w.innerHTML = `<div class="bs-main">
     <div class="welcome-hero"><div class="logo">${icon('sign')}</div><div><h1>egUDF</h1><div class="bs-sub" style="margin:0">UYAP belgelerini açın, düzenleyin, e-imzalayın ve gönderin — UYAP Editörü olmadan.</div></div></div>
-    <h2>Yeni</h2><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>
+    <h2>Yeni</h2><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div><div id="welcome-utpl"></div>
     <h2 style="display:flex;align-items:center;gap:12px">Son kullanılanlar <button class="btn" data-act="open">${icon('open')}Aç…</button></h2>
     ${recentHtml()}
     <div class="drop-hint">.udf veya Word (.docx) dosyalarını buraya sürükleyip bırakın</div>
   </div>`;
   wireStart(w);
+  renderUserTemplates($('#welcome-utpl', w)).then(() => { const e = $('#welcome-utpl', w); if (e && !e.querySelector('.tpl')) e.innerHTML = ''; });
 }
 
 function backstage(section = 'new') {
@@ -419,7 +439,8 @@ function backstage(section = 'new') {
   const showSection = (k) => {
     $$('[data-bs]', bs).forEach((b) => b.classList.toggle('active', b.dataset.bs === k));
     if (k === 'new') {
-      main.innerHTML = `<h1>Yeni belge</h1><div class="bs-sub">Bir şablonla başlayın. Köşeli parantezli alanlar doldurulacak yerlerdir (Gezinti → Doldurulacak).</div><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>`;
+      main.innerHTML = `<h1>Yeni belge</h1><div class="bs-sub">Bir şablonla başlayın. Köşeli parantezli alanlar doldurulacak yerlerdir (Gezinti → Doldurulacak).</div><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div><div id="user-tpls"></div>`;
+      renderUserTemplates($('#user-tpls', main), close);
     } else if (k === 'open') {
       main.innerHTML = `<h1>Aç</h1><div class="bs-sub"><button class="btn primary" data-act="open">${icon('open')}Gözat…</button></div><h2>Son kullanılanlar</h2>${recentHtml()}`;
     } else if (k === 'info') {
@@ -610,7 +631,7 @@ function paragraphDialog(ed) {
 // ================================================================== styles
 
 function applyParaStyle(ed, id) {
-  const st = PARA_STYLES.find((s) => s.id === id);
+  const st = PARA_STYLES.find((s) => s.id === id) || (app.userStyles || []).find((s) => s.id === id);
   if (!st) return;
   const { state } = ed;
   const tr = state.tr;
@@ -624,6 +645,7 @@ function applyParaStyle(ed, id) {
     if (st.marks.bold === false) tr.removeMark(a, b, schema.marks.bold);
     if (st.marks.italic === true) tr.addMark(a, b, schema.marks.italic.create());
     if (st.marks.italic === false) tr.removeMark(a, b, schema.marks.italic);
+    if (st.marks.size || st.marks.family) tr.addMark(a, b, schema.marks.textStyle.create({ fontSize: st.marks.size ? `${st.marks.size}pt` : null, fontFamily: st.marks.family || null, color: null }));
     if (st.marks.upper) {
       node.descendants((child, off) => {
         if (child.isText) {
@@ -766,6 +788,48 @@ async function runCmd(name, arg, el) {
     case 'pastePlain': ed?.commands.focus(); native.edit('pasteAndMatchStyle'); return;
     case 'selectAll': chain().selectAll().run(); return;
     case 'wordCount': wordCountDialog(app); return;
+    case 'styleSave': {
+      if (!tab) return;
+      const name = await promptBox({ title: 'Yeni stil', label: 'Stil adı', placeholder: 'Ör. Talep sonucu', ok: 'Kaydet', icon: 'plus' });
+      if (!name) return;
+      const p = ed.getAttributes('paragraph');
+      const ts = ed.getAttributes('textStyle');
+      const st = {
+        id: `u${Date.now().toString(36)}`, name, prev: name.length > 9 ? `${name.slice(0, 8)}…` : name,
+        css: [ed.isActive('bold') ? 'font-weight:700' : '', ed.isActive('italic') ? 'font-style:italic' : ''].filter(Boolean).join(';'),
+        para: { align: p.align, leftIndent: p.leftIndent, rightIndent: p.rightIndent, firstLineIndent: p.firstLineIndent, spaceAbove: p.spaceAbove, spaceBelow: p.spaceBelow, lineSpacing: p.lineSpacing },
+        marks: { bold: ed.isActive('bold'), italic: ed.isActive('italic'), size: ts.fontSize ? parseFloat(ts.fontSize) : null, family: ts.fontFamily || null },
+      };
+      app.userStyles = [...(app.userStyles || []), st];
+      await native.settings.set({ userStyles: app.userStyles });
+      ribbon.show(ribbon.current());
+      toast(`"${name}" stili eklendi`, { type: 'ok', ms: 1800 });
+      return;
+    }
+    case 'styleManage': {
+      const list = app.userStyles || [];
+      const body = h(`<div>${list.length ? `<div class="recover-list">${list.map((s) => `<div class="recover-item" data-id="${esc(s.id)}"><div style="flex:1"><b>${esc(s.name)}</b><div class="dim small">${s.marks.bold ? 'Kalın · ' : ''}${s.marks.italic ? 'İtalik · ' : ''}${s.marks.size ? `${s.marks.size} nk · ` : ''}${{ left: 'Sola', center: 'Ortalı', right: 'Sağa', justify: 'İki yana' }[s.para.align] || ''}</div></div><button class="btn danger" data-del="${esc(s.id)}">Sil</button></div>`).join('')}</div>` : '<p class="note">Henüz kendi stiliniz yok. Bir paragrafı biçimlendirip Giriş → Stil kaydet\'e basın.</p>'}</div>`);
+      body.onclick = async (e) => {
+        const id = e.target.dataset?.del;
+        if (!id) return;
+        app.userStyles = (app.userStyles || []).filter((s) => s.id !== id);
+        await native.settings.set({ userStyles: app.userStyles });
+        e.target.closest('.recover-item').remove();
+        ribbon.show(ribbon.current());
+      };
+      modal({ title: 'Stillerim', icon: 'template', body, width: 480, actions: [{ label: 'Kapat', kind: 'primary' }] });
+      return;
+    }
+    case 'templateSave': {
+      if (!tab) return;
+      const name = await promptBox({ title: 'Şablon olarak kaydet', label: 'Şablon adı', value: tab.title, ok: 'Kaydet', icon: 'template' });
+      if (!name) return;
+      const id = `t${Date.now().toString(36)}`;
+      await native.templates.write(id, JSON.stringify({ name, at: new Date().toISOString(), doc: tab.editor.getJSON(), meta: tab.meta }));
+      toast(`"${name}" şablonlarınıza eklendi (Dosya → Yeni)`, { type: 'ok' });
+      return;
+    }
+    case 'autocorrectDialog': autocorrectDialog(); return;
     case 'commentNew': addComment(app); return;
     case 'trackToggle': {
       if (!tab) return;
@@ -970,6 +1034,38 @@ async function offerRecovery() {
           renderTabs();
         }
         if (keys.size) toast('Kurtarılan belgeler açıldı — kaydetmeyi unutmayın.', { type: 'ok', ms: 5000 });
+      } },
+    ],
+  });
+}
+
+function applyAutocorrect() {
+  try { localStorage.setItem('udf.ac', JSON.stringify(app.ac)); } catch {}
+  for (const t of app.tabs) Object.assign(t.editor.storage.autocorrect, app.ac);
+}
+
+function autocorrectDialog() {
+  const ac = app.ac;
+  const lines = Object.entries(ac.list).map(([k, v]) => `${k} → ${v}`).join('\n');
+  const body = h(`<div>
+    <div class="field"><label><input type="checkbox" id="ac-q" ${ac.quotes ? 'checked' : ''}> Düz tırnakları akıllı tırnakla değiştir (“ ” ‘ ’)</label></div>
+    <div class="field"><label><input type="checkbox" id="ac-c" ${ac.capitalize ? 'checked' : ''}> Cümlelerin ilk harfini büyük yap</label></div>
+    <div class="field"><label><input type="checkbox" id="ac-d" ${ac.dashes ? 'checked' : ''}> İki kısa çizgiyi (--) uzun çizgiye çevir (–)</label></div>
+    <div class="field"><label><input type="checkbox" id="ac-e" ${ac.enabled ? 'checked' : ''}> Yazarken değiştir:</label><textarea id="ac-l" rows="10" spellcheck="false" style="font-family:Consolas,monospace;font-size:12px">${esc(lines)}</textarea></div>
+    <p class="note">Her satıra bir kural: <b>yazılan → yerine gelen</b>. Bir kelimeyi bitirdiğinizde (boşluk veya noktalama) uygulanır. Ctrl+Z düzeltmeyi geri alır.</p></div>`);
+  modal({
+    title: 'Otomatik düzeltme', icon: 'check', body, width: 560,
+    actions: [
+      { label: 'Varsayılanlar', left: true, onClick: () => { body.querySelector('#ac-l').value = Object.entries(DEFAULT_AUTOCORRECT).map(([k, v]) => `${k} → ${v}`).join('\n'); return false; } },
+      { label: 'İptal' },
+      { label: 'Kaydet', kind: 'primary', onClick: () => {
+        const list = {};
+        for (const line of body.querySelector('#ac-l').value.split('\n')) {
+          const m = /^\s*(\S+)\s*(?:→|->|=>|=)\s*(.+?)\s*$/.exec(line);
+          if (m) list[m[1]] = m[2];
+        }
+        app.ac = { enabled: body.querySelector('#ac-e').checked, quotes: body.querySelector('#ac-q').checked, capitalize: body.querySelector('#ac-c').checked, dashes: body.querySelector('#ac-d').checked, list };
+        applyAutocorrect();
       } },
     ],
   });
@@ -1260,6 +1356,15 @@ function wireChrome() {
     }
     if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
     if (e.altKey && k === 'm' && app.ed()) { e.preventDefault(); runCmd('commentNew'); return; }
+    // Word paragraph/character shortcuts
+    if (app.ed() && !e.altKey) {
+      const wordKeys = { '1': ['lineSpacing', 0], '2': ['lineSpacing', 1], '5': ['lineSpacing', 0.5] };
+      if (!e.shiftKey && wordKeys[e.key]) { e.preventDefault(); app.ed().chain().focus().setParagraphAttrs({ lineSpacing: wordKeys[e.key][1] }).run(); return; }
+      if (!e.shiftKey && (e.key === ']' || e.key === '[')) { e.preventDefault(); runCmd(e.key === ']' ? 'growFont' : 'shrinkFont'); return; }
+      if (k === 'm') { e.preventDefault(); runCmd(e.shiftKey ? 'outdent' : 'indent'); return; }
+      if (e.shiftKey && k === 'n') { e.preventDefault(); runCmd('style', 'normal'); return; }
+      if (e.shiftKey && k === 'l') { e.preventDefault(); runCmd('bullets'); return; }
+    }
     if (e.shiftKey && k === 'e' && app.ed()) { e.preventDefault(); runCmd('trackToggle'); return; }
     const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
     if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
@@ -1314,7 +1419,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'docx', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1335,6 +1440,17 @@ window.__smoke = {
         await wait(300);
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'autocorrect': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.commands.focus();
+        const type = (s) => { for (const ch of s) { const { from, to } = ed.state.selection; if (!ed.view.someProp('handleTextInput', (f) => f(ed.view, from, to, ch))) ed.view.dispatch(ed.state.tr.insertText(ch, from, to)); } };
+        type('davacı "vekil" hmk uyarınca... a) madde. yargı -- son');
+        const got = ed.getText();
+        const want = 'Davacı “vekil” HMK uyarınca… a) madde. Yargı – son';
+        return { ok: got === want, got };
       }
       case 'docx': {
         const t = newDocument('dava');
@@ -1605,7 +1721,8 @@ window.__smoke = {
 (async function boot() {
   wireChrome();
   ribbon = createRibbon(app);
-  try { const st = await native.settings.get(); app.profile = st.profile || {}; app.theme = st.theme || 'system'; } catch {}
+  try { const st = await native.settings.get(); app.profile = st.profile || {}; app.theme = st.theme || 'system'; app.userStyles = st.userStyles || []; } catch {}
+  try { app.ac = { enabled: true, quotes: true, capitalize: true, dashes: true, list: { ...DEFAULT_AUTOCORRECT }, ...JSON.parse(localStorage.getItem('udf.ac') || '{}') }; } catch { app.ac = { enabled: true, quotes: true, capitalize: true, dashes: true, list: { ...DEFAULT_AUTOCORRECT } }; }
   renderWelcome();
   if (!(await native.info()).smoke) setTimeout(offerRecovery, 600);
   activate(null);

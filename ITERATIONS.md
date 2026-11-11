@@ -150,3 +150,29 @@ change is committed and pushed, and an installer
     not imported.
   - Page counts can differ from Word. One 37-page Word document shows 61
     pages here, and part of the difference is not yet explained.
+
+## 0.7.0: Writing aids, own styles and templates (iteration 6)
+
+- **Otomatik düzeltme while typing** (Gözden Geçir → Otomatik düzeltme;
+  every part can be switched off, and Ctrl+Z undoes a correction):
+  - **Smart quotes:** "…" → “…” and '…' → ‘…’.
+  - **Sentence capitals:** capitalised at the start of a paragraph and after
+    . ! ?. This waits for the second letter, so "a)" enumerations stay as
+    typed, and abbreviations like "md.", "vb.", "Av.", "No." and numbers
+    like "1." don't trigger it.
+  - **Dashes and symbols:** -- → –, ... → …, (c) → ©, -> → →.
+  - **Editable replacement list**, with legal defaults: hmk → HMK, tmk,
+    tbk, ttk, iik → İİK, cmk, tck, yargıtay → Yargıtay, yada → ya da,
+    herşey → her şey…
+- **Word shortcuts:**
+  - Ctrl+1 / Ctrl+2 / Ctrl+5: line spacing 1 / 2 / 1.5.
+  - Ctrl+] / Ctrl+[: font size up/down.
+  - Ctrl+M / Ctrl+Shift+M: indent / outdent.
+  - Ctrl+Shift+N: Normal style; Ctrl+Shift+L: bullets.
+- **Stillerim:** format a paragraph, then Giriş → "Stil kaydet". It saves the
+  alignment, indents, spacing, bold/italic, size and font as a style in the
+  gallery (marked ★). "Stiller…" lists and deletes them. Styles are kept
+  across documents.
+- **Şablonlarım:** Ekle → "Şablon olarak kaydet" stores the current document
+  as a template (text, layout, header/footer). It appears under Dosya → Yeni
+  and on the start screen; hover to delete.

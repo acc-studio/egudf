@@ -10,6 +10,7 @@ import {
   LegalKeys, UdfCommands, ListLabels, Search,
 } from './extensions.js';
 import { Pagination } from './pagination.js';
+import { AutoCorrect } from './autocorrect.js';
 import { CommentMark } from '../review/comments.js';
 import { InsertionMark, DeletionMark, TrackChanges } from '../review/changes.js';
 
@@ -66,6 +67,7 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       LegalKeys,
       Search,
       TrackChanges,
+      AutoCorrect,
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],
     editorProps: {

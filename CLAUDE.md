@@ -24,6 +24,21 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
 - Rows may carry their own `columnSpans` that differ from the table's (`100,5,100` ×3 vs rows `91,109` ×2). Use the row grid when its count matches the cells.
 - `npm test` asserts parse→serialize→parse idempotency over all real samples; keep it green when touching `src/udf/codec.js`.
 
+## Review data, interop, comfort (0.2–0.7, see ITERATIONS.md)
+
+- **Review entry:** comments (`comment` mark + `tab.review.comments`) and tracked changes (`insertion`/`deletion` marks, `src/review/changes.js`) never reach content.xml. The codec drops deletion text; insertions are plain text there.
+  - The marked-up doc is stored in the zip entry `egudf/review.json`, bound to content.xml by SHA-256. It is ignored (markers lost, threads kept) if content.xml changed elsewhere.
+  - Comment-only edits carry `reviewOnly` meta → `tab.reviewDirty`. Saving then rewrites only the review entry and keeps content.xml + sign.sgn byte-identical (smoke `comment-signed`).
+  - Signing strips comments and requires accepting pending changes.
+- **Track changes:** an appendTransaction pass. It skips `trackSkip` (accept/reject), `reviewOnly`, `history$` (undo/redo) and `addToHistory:false` transactions.
+- **Word:** `src/interop/docx.js` imports and exports .docx (no extra deps). `npm test` round-trips up to 80 real .docx files from Downloads.
+- **Other modules:**
+  - Recovery snapshots: `userData/recovery/<session>-<tab>.json`, every 30 s.
+  - User templates: `userData/templates/*.json`.
+  - Theme: `nativeTheme.themeSource` via `theme:set`; the CSS just follows `prefers-color-scheme`.
+  - The context menu is drawn by the renderer; main forwards Chromium's params, including spelling.
+- **Smoke harness:** `--only=a,b` runs selected steps. results.json is written after every step, so a hang leaves partial results. Screenshots call `webContents.invalidate()` first; otherwise hidden windows return stale frames. In the hidden smoke window, status-bar UI refreshes lag (requestAnimationFrame), so assert on state, not on the status DOM.
+
 ## Signing
 
 - `sign.sgn` = DER CMS SignedData, detached, SHA-256 over raw `content.xml` bytes, one cert, signed attrs contentType/signingTime/messageDigest/signingCertificateV2 (ESSCertIDv2 with issuerSerial, default hash omitted), digest AlgorithmIdentifiers without NULL, sha256WithRSA with NULL. The test compares our OpenSSL dump with a real UYAP signature — keep it identical.
@@ -40,3 +55,4 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
 - **Quit**: with the Windows spellchecker active, Chromium lingers ~100 s after the last window closes (and would hold the single-instance lock). `window-all-closed` flushes storage/cookies then SIGKILLs itself. The smoke harness also hard-exits (capturePage triggers the same hang).
 - egPDF's `src/udf.js` is copied to `src/udf/pdf.js` with an XML-string entry point; it uses CRLF upstream — normalize before patching. Keep the two in sync.
 - PowerShell 5.1 `Get-Content/Set-Content` corrupt Turkish UTF-8 — use the file tools.
+- Scripted source edits: `String.replace` treats `$'`/`$&` in the replacement as patterns (`'history$'` appended the rest of the file once). Use `split(a).join(b)`, or the Edit tool. Bash heredocs in this environment can also mangle `$'…` and `\t`.

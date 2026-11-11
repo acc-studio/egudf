@@ -408,3 +408,9 @@ body.hide-markup .udf-doc ins.udf-ins { text-decoration: none; color: inherit; }
 .recover-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }
 .recover-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
 .recover-item input { margin-top: 3px; }
+
+/* ---------- iteration 6 ---------- */
+.gallery .gi.user .nm::before { content: "★ "; color: var(--accent); }
+.tpl.user-tpl { position: relative; }
+.tpl.user-tpl .tpl-del { position: absolute; top: 6px; right: 6px; opacity: 0; background: var(--surface); }
+.tpl.user-tpl:hover .tpl-del { opacity: 1; }

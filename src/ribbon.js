@@ -43,14 +43,14 @@ const TABS = {
         + btn('align', 'alignRight', 'Sağa hizala (Ctrl+R)', { arg: 'right' }) + btn('align', 'alignJustify', 'İki yana yasla (Ctrl+J)', { arg: 'justify' })
         + btn('lineSpacingMenu', 'lineSpacing', 'Satır ve paragraf aralığı') + btn('firstLine', 'indent', 'İlk satır girintisi (1,25 cm)', { label: '' }) + btn('paragraphDialog', 'page', 'Paragraf ayarları…'),
     )),
-    group('Stiller', `<div class="gallery">${PARA_STYLES.map((s) => `<div class="gi" data-cmd="style" data-arg="${s.id}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>`, 'shrink'),
+    group('Stiller', `<div class="gallery">${allStyles().map((s) => `<div class="gi ${s.user ? 'user' : ''}" data-cmd="style" data-arg="${esc(s.id)}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>` + col(btn('styleSave', 'plus', 'Seçimin biçimini yeni stil olarak kaydet', { label: 'Stil kaydet' }), btn('styleManage', 'template', 'Kendi stillerinizi yönetin', { label: 'Stiller…' })), 'shrink'),
     group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }), btn('selectAll', 'page', 'Tümünü seç (Ctrl+A)', { label: 'Tümünü seç' }))),
   ],
   insert: () => [
     group('Tablolar', big('tableMenu', 'table', 'Tablo')),
     group('Çizimler', big('image', 'image', 'Resim')),
     group('Metin', big('dateMenu', 'date', 'Tarih') + big('symbolMenu', 'symbol', 'Simge') + big('blockMenu', 'block', 'Hazır<br>bloklar')),
-    group('Belge', big('newFromTemplate', 'template', 'Şablondan<br>yeni')),
+    group('Belge', big('newFromTemplate', 'template', 'Şablondan<br>yeni') + big('templateSave', 'save', 'Şablon olarak<br>kaydet')),
   ],
   layout: () => [
     group('Sayfa Yapısı', big('marginsMenu', 'margins', 'Kenar<br>boşlukları') + big('orientationMenu', 'orientation', 'Yönlendirme') + big('pageSetup', 'page', 'Sayfa<br>yapısı')),
@@ -82,7 +82,7 @@ const TABS = {
     group('Değişiklikler', `<span class="split vsplit">${big('acceptChange', 'accept', 'Kabul et', { cls: 'okc' })}<button class="rb" data-cmd="acceptMenu" title="Kabul seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + `<span class="split vsplit">${big('rejectChange', 'reject', 'Reddet', { cls: 'badc' })}<button class="rb" data-cmd="rejectMenu" title="Ret seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + col(btn('changePrev', 'chevron', 'Önceki değişiklik', { label: 'Önceki', cls: 'flip' }), btn('changeNext', 'chevron', 'Sonraki değişiklik', { label: 'Sonraki' }))),
-    group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' })),
+    group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' }) + big('autocorrectDialog', 'check', 'Otomatik<br>düzeltme', { title: 'Otomatik düzeltme seçenekleri' })),
   ],
   view: () => [
     group('Göster', big('ruler', 'ruler', 'Cetvel') + big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
@@ -107,7 +107,11 @@ const TABS = {
 
 const TAB_LABELS = [['file', 'Dosya'], ['home', 'Giriş'], ['insert', 'Ekle'], ['layout', 'Düzen'], ['review', 'Gözden Geçir'], ['sign', 'İmza'], ['uyap', 'UYAP'], ['view', 'Görünüm']];
 
+let ribbonApp = null;
+const allStyles = () => [...PARA_STYLES, ...(ribbonApp?.userStyles || []).map((s) => ({ ...s, user: true }))];
+
 export function createRibbon(app) {
+  ribbonApp = app;
   const head = $('#ribbon-tabs');
   const body = $('#ribbon');
   let current = 'home';
@@ -156,7 +160,7 @@ export function createRibbon(app) {
     }
     $$('[data-cmd]', body).forEach((b) => {
       const c = b.dataset.cmd;
-      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks', 'theme', 'shortcuts', 'ruler'].includes(c);
+      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks', 'theme', 'shortcuts', 'ruler', 'styleManage', 'autocorrectDialog'].includes(c);
       if (b.tagName === 'BUTTON') b.disabled = !has && !docless;
       if (!ed) { b.classList.remove('active'); return; }
       let on = false;

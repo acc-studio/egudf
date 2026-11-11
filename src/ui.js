@@ -66,6 +66,15 @@ export function confirmBox({ title, text, ok = 'Tamam', cancel = 'İptal', kind 
   });
 }
 
+/** promptBox({ title, label, value, ok }) → string | null */
+export function promptBox({ title, label, value = '', ok = 'Tamam', icon: ic = 'info', placeholder = '' }) {
+  return new Promise((resolve) => {
+    const body = h(`<div><div class="field"><label>${esc(label)}</label><input type="text" value="${esc(value)}" placeholder="${esc(placeholder)}"></div></div>`);
+    let result = null;
+    modal({ title, icon: ic, body, width: 440, onClose: () => resolve(result), actions: [{ label: 'İptal' }, { label: ok, kind: 'primary', onClick: () => { const v = body.querySelector('input').value.trim(); if (!v) return false; result = v; return true; } }] });
+  });
+}
+
 // ------------------------------------------------------------------ menu
 let openMenu = null;
 export function closeMenu() { openMenu?.remove(); openMenu = null; }

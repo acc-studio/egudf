@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('native', {
   edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
   setTheme: (t) => ipcRenderer.invoke('theme:set', t),
   onContextMenu: on('context-menu'),
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    write: (id, json) => ipcRenderer.invoke('templates:write', id, json),
+    remove: (id) => ipcRenderer.invoke('templates:delete', id),
+  },
   recovery: {
     write: (key, json) => ipcRenderer.invoke('recovery:write', key, json),
     remove: (key) => ipcRenderer.invoke('recovery:delete', key),
