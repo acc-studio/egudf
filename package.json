@@ -1,13 +1,14 @@
 {
-  "name": "udf-editor",
+  "name": "egudf",
   "version": "0.1.0",
-  "description": "Modern UYAP .udf editor with e-imza signing",
+  "description": "egUDF — UYAP .udf editor with e-imza signing",
   "main": "main.js",
   "scripts": {
     "build": "node build.mjs",
     "start": "npm run build && electron .",
     "test": "node --test test/*.test.js",
     "smoke": "npm run build && electron . --smoke=test/.out",
+    "smoke:packaged": "npm run build && electron-builder --dir --publish never && release\\win-unpacked\\egUDF.exe --smoke=test/.pkg",
     "rebuild": "electron-rebuild -f -w pkcs11js",
     "dist": "npm run build && electron-builder --publish never",
     "postinstall": "electron-rebuild -f -w pkcs11js"
@@ -37,10 +38,10 @@
     "fflate": "^0.8.3",
     "pdf-lib": "^1.17.1"
   },
-  "productName": "UDF Editör",
+  "productName": "egUDF",
   "build": {
     "appId": "com.azizcancengiz.udfeditor",
-    "productName": "UDF Editör",
+    "productName": "egUDF",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -49,6 +50,8 @@
       "main.js",
       "preload.cjs",
       "index.html",
+      "src/styles.css",
+      "build/icon.png",
       "sign/**",
       "dist/**",
       "assets/**",

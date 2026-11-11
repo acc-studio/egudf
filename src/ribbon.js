@@ -22,7 +22,7 @@ const btn = (cmd, ic, title, { arg = '', label = '', cls = '' } = {}) =>
   `<button class="rb ${label ? '' : 'icon'} ${cls}" data-cmd="${cmd}" data-arg="${esc(arg)}" title="${esc(title)}">${icon(ic)}${label ? `<span>${label}</span>` : ''}</button>`;
 const split = (cmd, ic, title, menuCmd, { arg = '', cls = '' } = {}) =>
   `<span class="split">${btn(cmd, ic, title, { arg, cls })}<button class="rb" data-cmd="${menuCmd}" title="${esc(title)} seçenekleri">${icon('chevron', 'caret')}</button></span>`;
-const group = (label, body) => `<div class="rgroup"><div class="rgroup-body">${body}</div><div class="rgroup-label">${label}</div></div>`;
+const group = (label, body, cls = '') => `<div class="rgroup ${cls}"><div class="rgroup-body">${body}</div><div class="rgroup-label">${label}</div></div>`;
 const col = (...rows) => `<div class="rcol">${rows.map((r) => `<div class="rrow">${r}</div>`).join('')}</div>`;
 
 const TABS = {
@@ -43,7 +43,7 @@ const TABS = {
         + btn('align', 'alignRight', 'Sağa hizala (Ctrl+R)', { arg: 'right' }) + btn('align', 'alignJustify', 'İki yana yasla (Ctrl+J)', { arg: 'justify' })
         + btn('lineSpacingMenu', 'lineSpacing', 'Satır ve paragraf aralığı') + btn('firstLine', 'indent', 'İlk satır girintisi (1,25 cm)', { label: '' }),
     )),
-    group('Stiller', `<div class="gallery">${PARA_STYLES.map((s) => `<div class="gi" data-cmd="style" data-arg="${s.id}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>`),
+    group('Stiller', `<div class="gallery">${PARA_STYLES.map((s) => `<div class="gi" data-cmd="style" data-arg="${s.id}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>`, 'shrink'),
     group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }))),
   ],
   insert: () => [

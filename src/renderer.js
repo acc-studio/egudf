@@ -1,4 +1,4 @@
-// UDF Editör — renderer: tabs, file pipeline, commands, dialogs, status.
+// egUDF — renderer: tabs, file pipeline, commands, dialogs, status.
 import { createEditor, staticHTML } from './editor/index.js';
 import { pageOfPos, paginationKey } from './editor/pagination.js';
 import { parseUdfXml, serializeUdfXml, newDocMeta, docText, defaultParaAttrs } from './udf/codec.js';
@@ -104,9 +104,9 @@ function activate(tab) {
     applyZoom(tab);
     tab.editor.commands.repaginate();
     setTimeout(() => tab.editor.commands.focus(), 0);
-    document.title = `${tab.title} — UDF Editör`;
+    document.title = `${tab.title} — egUDF`;
   } else {
-    document.title = 'UDF Editör';
+    document.title = 'egUDF';
     renderWelcome();
   }
   refreshNav();
@@ -318,7 +318,7 @@ function wireStart(root, after) {
 function renderWelcome() {
   const w = $('#welcome');
   w.innerHTML = `<div class="bs-main">
-    <div class="welcome-hero"><div class="logo">${icon('sign')}</div><div><h1>UDF Editör</h1><div class="bs-sub" style="margin:0">UYAP belgelerini açın, düzenleyin, e-imzalayın ve gönderin — UYAP Editörü olmadan.</div></div></div>
+    <div class="welcome-hero"><div class="logo">${icon('sign')}</div><div><h1>egUDF</h1><div class="bs-sub" style="margin:0">UYAP belgelerini açın, düzenleyin, e-imzalayın ve gönderin — UYAP Editörü olmadan.</div></div></div>
     <h2>Yeni</h2><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>
     <h2 style="display:flex;align-items:center;gap:12px">Son kullanılanlar <button class="btn" data-act="open">${icon('open')}Aç…</button></h2>
     ${recentHtml()}

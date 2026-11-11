@@ -1,4 +1,4 @@
-/* UDF Editör — shares egPDF's design tokens so the two apps feel like one suite. */
+/* egUDF — shares egPDF's design tokens so the two apps feel like one suite. */
 :root {
   --bg: #f4f4f5;
   --surface: #ffffff;
@@ -105,6 +105,9 @@ kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border: 1p
 body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar { display: none; }
 .rgroup { display: flex; flex-direction: column; padding: 0 8px; border-right: 1px solid var(--border); flex: none; }
 .rgroup:last-child { border-right: none; }
+/* The style gallery gives up width first: items that don't fit wrap onto a hidden row instead of scrolling the ribbon. */
+.rgroup.shrink { flex: 0 1 auto; min-width: 100px; }
+.rgroup.shrink .rgroup-body { min-width: 0; overflow: hidden; }
 .rgroup-body { flex: 1; display: flex; align-items: center; gap: 4px; }
 .rgroup-label { text-align: center; font-size: 11px; color: var(--text-dim); padding-top: 2px; }
 .rcol { display: flex; flex-direction: column; gap: 3px; justify-content: center; }
@@ -127,7 +130,8 @@ body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar {
 .rsel.size { width: 58px; }
 .rsel:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 
-.gallery { display: flex; gap: 4px; align-items: stretch; height: 66px; }
+.gallery { display: flex; flex-wrap: wrap; gap: 4px; align-items: stretch; height: 66px; min-width: 0; overflow: hidden; }
+.gallery .gi { height: 66px; box-sizing: border-box; }
 .gallery .gi { width: 82px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; display: flex; flex-direction: column; justify-content: space-between; padding: 6px 6px 4px; overflow: hidden; }
 .gallery .gi:hover { border-color: var(--accent); }
 .gallery .gi .prev { font-family: "Times New Roman", serif; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; }

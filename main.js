@@ -1,4 +1,4 @@
-// UDF Editör — Electron main process.
+// egUDF — Electron main process.
 // File IO, dialogs, e-imza (PKCS#11, CAdES-BES) and the UYAP Avukat Portal
 // window. Documents never leave the machine except through the user's own
 // actions inside the UYAP portal window.
@@ -18,6 +18,19 @@ const SMOKE = flag('smoke');
 const DEFAULT_UYAP_URL = 'https://avukatbeta.uyap.gov.tr/';
 
 const udfArgs = (list) => list.filter((a) => !a.startsWith('--') && /\.udf$/i.test(a) && fs.existsSync(a)).map((a) => path.resolve(a));
+
+// Renamed from "UDF Editör": carry over settings, recents (localStorage) and the
+// UYAP portal session from the old userData folder on first launch.
+(function migrateUserData() {
+  try {
+    const now = app.getPath('userData');
+    const old = path.join(app.getPath('appData'), 'UDF Editör');
+    // Electron creates the (empty) userData folder before this runs, so test for
+    // a file Chromium only writes once the profile has been used.
+    if (path.resolve(now) === path.resolve(old) || fs.existsSync(path.join(now, 'Preferences')) || !fs.existsSync(old)) return;
+    fs.cpSync(old, now, { recursive: true, filter: (src) => !/[\\/](Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache)$|[\\/](SingletonLock|lockfile|DevToolsActivePort)$/.test(src) });
+  } catch (e) { console.error('userData migration failed', e); }
+})();
 
 if (SMOKE == null && !app.requestSingleInstanceLock()) app.quit();
 
@@ -45,7 +58,7 @@ function createWindow() {
     height: 940,
     minWidth: 900,
     minHeight: 600,
-    title: 'UDF Editör',
+    title: 'egUDF',
     backgroundColor: '#f4f4f5',
     autoHideMenuBar: true,
     show: SMOKE == null,
@@ -187,7 +200,7 @@ function findEgpdf() {
 }
 ipcMain.handle('egpdf:available', () => !!findEgpdf());
 ipcMain.handle('egpdf:open', async (_e, bytes, name) => {
-  const dir = path.join(os.tmpdir(), 'udf-editor');
+  const dir = path.join(os.tmpdir(), 'egudf');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${String(name || 'belge').replace(/[\\/:*?"<>|]/g, '_')}.pdf`);
   fs.writeFileSync(file, Buffer.from(bytes));

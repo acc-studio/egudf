@@ -410,7 +410,7 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
   });
 
   doc.setTitle(title || text.trim().split('\n')[0]?.slice(0, 120) || 'UYAP document');
-  doc.setProducer('UDF Editör (egPDF layout engine)');
+  doc.setProducer('egUDF (egPDF layout engine)');
   return await doc.save();
 }
 
