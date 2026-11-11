@@ -25,7 +25,7 @@ export async function readReview(other, contentXml) {
 
 /** True when the tab holds anything worth persisting. */
 export function hasReview(tab, docJson) {
-  if (tab.review?.comments?.length || tab.review?.tracking) return true;
+  if (tab.review?.comments?.length || tab.review?.tracking || tab.review?.shared) return true;
   let found = false;
   const walk = (n) => {
     if (found) return;

@@ -126,6 +126,86 @@ function setupSpellcheck(ses) {
   } catch { /* macOS: language choice is automatic */ }
 }
 
+// ---- shared editing over a synced folder (see src/collab/live.js)
+// fs.watchFile polls: OneDrive/Dropbox replace files in ways fs.watch misses.
+const collabWatch = new Map(); // path → { senders:Set, dirTimer, known:Set }
+const presenceName = (doc, user) => path.join(path.dirname(doc), `~$${path.basename(doc).replace(/\.udf$/i, '')}.egudf-${String(user).replace(/[^\w-]/g, '')}.json`);
+const conflictCopies = (doc) => {
+  const dir = path.dirname(doc);
+  const stem = path.basename(doc).replace(/\.udf$/i, '');
+  try {
+    // OneDrive: "Dilekçe-PCADI.udf", "Dilekçe-PCADI-2.udf"; Dropbox: "Dilekçe (… conflicted copy …).udf"
+    return fs.readdirSync(dir).filter((f) => /\.udf$/i.test(f) && f !== path.basename(doc) && (f.startsWith(`${stem}-`) || (f.startsWith(`${stem} (`) && /conflict|çakışma/i.test(f)))).map((f) => path.join(dir, f));
+  } catch { return []; }
+};
+ipcMain.handle('collab:watch', (e, p) => {
+  const key = path.resolve(p);
+  let w = collabWatch.get(key);
+  if (!w) {
+    w = { senders: new Set(), known: new Set(conflictCopies(key)) };
+    fs.watchFile(key, { interval: 800 }, (cur, prev) => {
+      if (cur.mtimeMs === prev.mtimeMs && cur.size === prev.size) return;
+      for (const s of w.senders) if (!s.isDestroyed()) s.send('collab:changed', { path: key });
+    });
+    w.dirTimer = setInterval(() => {
+      for (const c of conflictCopies(key)) {
+        if (w.known.has(c)) continue;
+        w.known.add(c);
+        for (const s of w.senders) if (!s.isDestroyed()) s.send('collab:conflict-copy', { path: key, copy: c });
+      }
+    }, 2500);
+    collabWatch.set(key, w);
+  }
+  w.senders.add(e.sender);
+  return true;
+});
+ipcMain.handle('collab:unwatch', (e, p) => {
+  const key = path.resolve(p);
+  const w = collabWatch.get(key);
+  if (!w) return;
+  w.senders.delete(e.sender);
+  if (!w.senders.size) { fs.unwatchFile(key); clearInterval(w.dirTimer); collabWatch.delete(key); }
+});
+ipcMain.handle('collab:presence:write', (_e, doc, user, data) => {
+  const f = presenceName(doc, user);
+  const fresh = !fs.existsSync(f);
+  try {
+    const body = Buffer.from(JSON.stringify(data));
+    if (fresh) fs.writeFileSync(f, body);
+    else {
+      // a hidden file can't be recreated on Windows ('w' fails): rewrite it in place
+      const fd = fs.openSync(f, 'r+');
+      try { fs.ftruncateSync(fd, 0); fs.writeSync(fd, body, 0, body.length, 0); } finally { fs.closeSync(fd); }
+    }
+  } catch { return false; }
+  if (fresh && process.platform === 'win32') spawn('attrib', ['+h', f], { windowsHide: true }).on('error', () => {});
+  return true;
+});
+ipcMain.handle('collab:presence:list', (_e, doc) => {
+  const dir = path.dirname(doc);
+  const pre = `~$${path.basename(doc).replace(/\.udf$/i, '')}.egudf-`;
+  const out = [];
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.startsWith(pre) || !f.endsWith('.json')) continue;
+      try { out.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))); } catch {}
+    }
+  } catch {}
+  return out;
+});
+ipcMain.handle('collab:presence:remove', (_e, doc, user) => { try { fs.rmSync(presenceName(doc, user), { force: true }); } catch {} });
+ipcMain.handle('collab:trash', async (_e, p) => { try { await shell.trashItem(p); return true; } catch { return false; } });
+ipcMain.handle('collab:synced', (_e, p) => {
+  // inside a OneDrive / Dropbox / Google Drive folder?
+  const roots = [process.env.OneDrive, process.env.OneDriveCommercial, process.env.OneDriveConsumer].filter(Boolean).map((r) => path.resolve(r).toLowerCase());
+  const full = path.resolve(p).toLowerCase();
+  if (roots.some((r) => full.startsWith(r))) return 'OneDrive';
+  if (/[\\/](dropbox)[\\/]/i.test(full)) return 'Dropbox';
+  if (/[\\/](google drive|my drive|drive'ım)[\\/]/i.test(full)) return 'Google Drive';
+  if (/^\\\\/.test(p)) return 'ağ klasörü';
+  return null;
+});
+
 // editor spell checking: Hunspell (WASM) with the bundled dictionaries
 let spellSvc = null;
 const spell = () => (spellSvc ??= createSpellService({ assetsDir: path.join(__dirname, 'assets', 'hunspell'), userFile: path.join(app.getPath('userData'), 'dictionary.txt') }));

@@ -17,6 +17,7 @@ import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
+import { createCollab } from './collab/live.js';
 import { setupSpell, applySpellSettings, spellDialog, spellLangMenu, dictionaryDialog, spellMenuItems, restoreSpellLangs, spellAvailable, settle } from './spelling.js';
 import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from './udf/pagenum.js';
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
@@ -164,6 +165,7 @@ async function closeTab(tab) {
     if (r === true && !(await save(tab))) return false;
   }
   native.recovery.remove(recoveryKey(tab));
+  await app.collab?.stop(tab);
   tab.editor.destroy();
   tab.host.remove();
   const i = app.tabs.indexOf(tab);
@@ -225,6 +227,7 @@ function onDocChange(tab, tr) {
   scheduleNav();
   scheduleReview();
   scheduleUI();
+  app.collab?.edited(tab, tr);
 }
 
 let reviewTimer = null;
@@ -238,12 +241,35 @@ async function openPath(path) {
   if (/\.docx$/i.test(path)) return openDocx(path);
   try {
     const bytes = await native.readFile(path);
-    return await openBytes(bytes, { path, title: baseName(path) });
+    const tab = await openBytes(bytes, { path, title: baseName(path) });
+    offerCollab(tab);
+    return tab;
   } catch (e) {
     toast(`Açılamadı: ${e.message || e}`, { type: 'bad' });
     removeRecent(path);
     return null;
   }
+}
+
+/** Someone else has this file open in egUDF: offer to work together. */
+async function offerCollab(tab) {
+  if (!tab?.path || !app.collab) return;
+  const others = await app.collab.othersOn(tab.path);
+  if (!others.length) return;
+  const names = [...new Set(others.map((p) => p.user))].join(', ');
+  toast(`${names} bu belgeyi şu anda düzenliyor. Ortak çalışmayı açarsanız değişiklikleriniz birleşir, kimse diğerinin üzerine yazmaz.`, { type: 'warn', ms: 15000, actions: [{ label: 'Ortak çalışmayı aç', onClick: () => app.collab.start(tab) }] });
+}
+
+async function collabToggle(tab) {
+  if (!tab) return;
+  if (app.collab.active(tab)) { await app.collab.stop(tab); toast('Ortak çalışma kapatıldı.', { ms: 1800 }); return; }
+  if (!tab.path) { toast('Ortak çalışma için belgeyi önce OneDrive (ya da başka bir eşitlenen) klasöre kaydedin.', { type: 'warn', ms: 5000 }); return; }
+  const where = await native.collab.synced(tab.path);
+  if (!where) {
+    const ok = await confirmBox({ title: 'Ortak çalışma', text: 'Bu belge eşitlenen bir klasörde görünmüyor (OneDrive, Dropbox, Google Drive ya da ağ klasörü). Başkaları dosyaya erişemiyorsa ortak çalışma yalnızca bu bilgisayardaki diğer egUDF pencereleriyle olur. Yine de açılsın mı?', ok: 'Aç', cancel: 'Vazgeç' });
+    if (!ok) return;
+  }
+  await app.collab.start(tab);
 }
 
 /** Word → new unsaved UDF tab (Save asks for a .udf name next to the original). */
@@ -262,6 +288,14 @@ async function openDocx(path, bytes = null) {
     toast(`Word belgesi açılamadı: ${e.message || e}`, { type: 'bad' });
     return null;
   }
+}
+
+/** A .udf as the editor sees it (for merging someone else's version). */
+async function parseUdfBytes(bytes) {
+  const u = readUdf(bytes);
+  const parsed = parseUdfXml(mergeTemplateData(u.contentText).xml);
+  const review = await readReview(u.other, u.contentXml);
+  return { doc: review?.doc || parsed.doc, fromReview: !!review?.doc, meta: parsed.meta, comments: review?.comments || [], contentXml: u.contentXml };
 }
 
 async function openBytes(bytes, { path, title }) {
@@ -300,7 +334,7 @@ function contentBytes(tab) {
   return strToU8(serializeUdfXml(tab.editor.getJSON(), tab.meta));
 }
 
-async function save(tab, { as = false } = {}) {
+async function save(tab, { as = false, quiet = false } = {}) {
   if (!tab) return false;
   let path = tab.path;
   if (!path || as) {
@@ -332,8 +366,11 @@ async function save(tab, { as = false } = {}) {
   addRecent(path, tab.title);
   renderTabs();
   scheduleUI();
-  toast(`Kaydedildi: ${tab.title}.udf`, { type: 'ok', ms: 2200 });
-  return true;
+  if (!quiet) {
+    toast(`Kaydedildi: ${tab.title}.udf`, { type: 'ok', ms: 2200 });
+    app.collab?.noteWritten(tab, bytes);
+  }
+  return bytes;
 }
 
 /** Called by the sign dialog. Signs content.xml on the card and writes the signed .udf. */
@@ -964,6 +1001,7 @@ async function runCmd(name, arg, el) {
     }
     case 'shortcuts': shortcutsDialog(); return;
     case 'spellDialog': spellDialog(app); return;
+    case 'collabToggle': await collabToggle(tab); return;
     case 'spellLangMenu': spellLangMenu(app, el); return;
     case 'dictionary': dictionaryDialog(app); return;
     case 'themeMenu': themeMenu(app, el); return;
@@ -1396,6 +1434,18 @@ function refreshUI() {
   sb.innerHTML = `${icon(ic)}${esc(s ? (s.state === 'valid' ? 'İmzalı' : s.state === 'stale' ? 'İmza eski' : 'İmza hatalı') : 'İmzasız')}`;
   const page = pageOfPos(tab.editor.view, tab.editor.state.selection.from);
   $('#sb-page').textContent = `Sayfa ${Math.min(page, tab.pages)} / ${tab.pages}`;
+  {
+    const c = $('#sb-collab');
+    const on = app.collab?.active(tab);
+    c.classList.toggle('hidden', !on);
+    if (on) {
+      const peers = app.collab.peers(tab);
+      const names = [...new Set(peers.map((p) => p.user))];
+      c.innerHTML = `${icon('globe')}<span>${names.length ? `Ortak: ${esc(names.join(', '))}` : 'Ortak çalışma · yalnız sizsiniz'}</span>`;
+      c.title = 'Ortak çalışma açık: değişiklikler otomatik kaydedilir ve birleştirilir. Kapatmak için tıklayın.';
+      c.classList.toggle('peers', names.length > 0);
+    }
+  }
   { const n = tab.editor.storage.udfSpell?.enabled ? tab.editor.storage.udfSpell.errors.length : 0; const el = $('#sb-lang'); el.classList.toggle('errs', n > 0); el.dataset.errs = n ? `· ${n} yazım hatası` : ''; }
   clearTimeout(wcTimer);
   wcTimer = setTimeout(() => {
@@ -1425,6 +1475,16 @@ function wireChrome() {
     const ids = commentsAt(ed.state);
     return [{ label: 'Yeni yorum', icon: 'comment', kbd: 'Ctrl+Alt+M', onClick: () => runCmd('commentNew') }, ...(ids.length ? [{ label: 'Yorumu sil', icon: 'reject', onClick: () => runCmd('commentDelete') }] : [])];
   });
+  app.instanceId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  app.collab = createCollab(app, {
+    save, parse: parseUdfBytes, me: () => author(app), toast, scheduleUI, renderTabs,
+    // compare blocks as UYAP would store them (for files last saved outside egUDF)
+    canon: (t) => { const cache = new Map(); return (b) => { const k = JSON.stringify(b); if (!cache.has(k)) { try { cache.set(k, JSON.stringify(parseUdfXml(serializeUdfXml({ type: 'doc', content: [b] }, t.meta)).doc.content)); } catch { cache.set(k, k); } } return cache.get(k); }; },
+    renderReview: () => renderReview(app),
+    metaChanged: (t) => { t._hHtml = undefined; t._fHtml = undefined; applyGeometry(t); t.editor.commands.repaginate(); },
+  });
+  $('#sb-collab').onclick = () => runCmd('collabToggle');
+  window.addEventListener('beforeunload', () => app.collab.leaveAll());
   app.spell = localStorage.getItem('udf.spell') !== '0';
   app.spellSkipCaps = localStorage.getItem('udf.spellCaps') !== '0';
   app.spellCache = new Map();
@@ -1579,7 +1639,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1845,6 +1905,103 @@ window.__smoke = {
           && r.dialogWord === 'mahkmeye' && r.suggestion === 'mahkemeye' && r.afterChange && r.next === 'mahkmeye' && r.next2 === 'yanlızca' && r.fixed2 && r.done && r.remaining === 0;
         t.dirty = false;
         return r;
+      }
+      case 'collab': {
+        $('#modal-root').innerHTML = '';
+        const r = {};
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.commands.setContent({ type: 'doc', content: ['Birinci paragraf.', 'İkinci paragraf.', 'Üçüncü paragraf.', 'Dördüncü paragraf.', 'Beşinci paragraf.'].map(P) });
+        const p = `${out}${sep}ortak.udf`;
+        for (const f of await native.collab.listPresence(p)) await native.collab.removePresence(p, String(f.user).toLocaleLowerCase('tr'));
+        t.path = p; t.title = 'ortak';
+        await save(t, { quiet: true });
+        r.started = await app.collab.start(t, { silent: true });
+        const s = app.collab.get(t);
+        await s.chain;
+        // "Ayşe" is in the same file: presence + her egUDF saving her edit (with the review entry, as egUDF does)
+        await native.collab.writePresence(p, 'ayse-yilmaz', { user: 'Ayşe Yılmaz', at: Date.now(), block: 3, id: 'other-instance' });
+        const herSave = async (doc, withReview = true) => {
+          const xml = new TextEncoder().encode(serializeUdfXml(doc, t.meta));
+          const fake = { review: { comments: [], shared: true } };
+          await native.writeFile(p, writeUdf({ contentXml: xml, extra: withReview ? await reviewEntries(fake, doc, xml) : {} }));
+        };
+        const until = async (cond, ms = 6000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await wait(100); await s.chain; return cond(); };
+        const texts = () => { const a = []; ed.state.doc.forEach((n) => a.push(n.textContent)); return a; };
+        await s.heartbeat();
+        r.peers = app.collab.peers(t).map((x) => x.user).join();
+        r.flag = !!ed.view.dom.querySelector('.peer-flag');
+        // 1) she edits paragraph 4 and adds one at the end; meanwhile I edit paragraph 1
+        const base = ed.getJSON();
+        const hers = JSON.parse(JSON.stringify(base));
+        hers.content[3] = P('Dördüncü paragraf (Ayşe düzeltti).');
+        hers.content.push(P('Altıncı paragraf (Ayşe ekledi).'));
+        ed.commands.setTextSelection(3);
+        ed.commands.insertContent('Benim eklemem: ');
+        await herSave(hers);
+        r.merged1 = await until(() => texts().length === 6 && texts()[3].includes('Ayşe'));
+        r.mineKept = texts()[0].startsWith('BBenim eklemem') || texts()[0].includes('Benim eklemem');
+        // my edit reaches the disk (auto-save)
+        r.pushed = await until(() => s.stats.saves > 0 && !t.dirty, 8000);
+        const disk1 = await parseUdfBytes(await native.readFile(p));
+        r.diskHasBoth = disk1.doc.content.length === 6 && JSON.stringify(disk1.doc).includes('Benim eklemem') && JSON.stringify(disk1.doc).includes('Ayşe ekledi');
+        // 2) we both change paragraph 2 → my version stays, hers is added as her tracked insertion
+        const base2 = JSON.parse(JSON.stringify(disk1.doc));
+        ed.commands.setTextSelection(ed.state.doc.child(0).nodeSize + 3);
+        ed.commands.insertContent('X');
+        const hers2 = JSON.parse(JSON.stringify(base2));
+        hers2.content[1] = P('İkinci paragraf, Ayşe sürümü.');
+        await wait(50);
+        await herSave(hers2);
+        r.conflict = await until(() => s.stats.conflicts > 0);
+        const ins = changeList(ed.state.doc).filter((c) => c.kind === 'insertion');
+        r.conflictAsChange = ins.some((c) => c.author === 'Ayşe Yılmaz' && c.text.includes('Ayşe sürümü'));
+        await until(() => !t.dirty, 8000);
+        // 3) a save from outside egUDF (no review entry): only the really changed paragraph moves
+        const cur = await parseUdfBytes(await native.readFile(p));
+        const plain = JSON.parse(JSON.stringify(cur.doc));
+        plain.content[plain.content.length - 1] = P('Altıncı paragraf, UYAP editöründe değişti.');
+        const before3 = s.stats.conflicts;
+        await herSave(plain, false);
+        r.plainMerged = await until(() => texts().some((x) => x.includes('UYAP editöründe')));
+        r.plainNoConflict = s.stats.conflicts === before3;
+        // 4) a OneDrive conflict copy is detected and offered
+        const copy = `${out}${sep}ortak-AYSE-PC.udf`;
+        const c2 = JSON.parse(JSON.stringify(ed.getJSON()));
+        c2.content.push(P('Çakışma kopyasından gelen paragraf.'));
+        const xmlc = new TextEncoder().encode(serializeUdfXml(c2, t.meta));
+        await native.writeFile(copy, writeUdf({ contentXml: xmlc, extra: await reviewEntries({ review: { comments: [], shared: true } }, c2, xmlc) }));
+        r.copyOffered = await until(() => [...document.querySelectorAll('.toast')].some((e) => /çakışma kopyası/i.test(e.textContent)), 8000);
+        const btn = [...document.querySelectorAll('.toast button')].find((b) => b.textContent === 'Birleştir');
+        btn?.click();
+        r.copyMerged = await until(() => texts().some((x) => x.includes('Çakışma kopyasından')));
+        r.copyGone = await until(() => true) && !(await native.exists(copy));
+        // undo after remote changes still only undoes my own typing
+        r.stats = { ...s.stats };
+        await app.collab.stop(t);
+        r.presenceCleared = !(await native.collab.listPresence(p)).some((x) => x.id === app.instanceId);
+        await native.collab.removePresence(p, 'ayse-yilmaz');
+        await s.heartbeat?.();
+        // screenshot: show the shared state with a peer
+        await app.collab.start(t, { silent: true });
+        await native.collab.writePresence(p, 'ayse-yilmaz', { user: 'Ayşe Yılmaz', at: Date.now(), block: 1, id: 'other-instance' });
+        await app.collab.get(t).heartbeat();
+        showPane(app, true);
+        refreshUI();
+        await wait(300);
+        r.statusText = $('#sb-collab').textContent;
+        r.ok = r.started && r.peers === 'Ayşe Yılmaz' && r.flag && r.merged1 && r.mineKept && r.pushed && r.diskHasBoth && r.conflict && r.conflictAsChange && r.plainMerged && r.plainNoConflict && r.copyOffered && r.copyMerged && r.copyGone && r.presenceCleared && /Ayşe/.test(r.statusText);
+        return r;
+      }
+      case 'collab-off': {
+        const t = app.tab();
+        if (t && app.collab.active(t)) await app.collab.stop(t);
+        await native.collab.removePresence(`${out}${sep}ortak.udf`, 'ayse-yilmaz');
+        if (t) t.dirty = false;
+        showPane(app, false);
+        return { ok: true };
       }
       case 'spelling-ui': {
         $('#modal-root').innerHTML = '';
@@ -2115,7 +2272,7 @@ window.__smoke = {
         return { ok: true, drivers, certs, msg };
       }
       case 'real': {
-        const sample = recents().find((r) => /\.udf$/i.test(r.path) && !r.path.includes('smoke'));
+        const sample = recents().find((r) => /\.udf$/i.test(r.path) && !r.path.includes('smoke') && !/[\\/]test[\\/]\.(out|pkg|dbg)[\\/]/i.test(r.path));
         if (!sample) return { ok: true, skipped: true };
         const t = await openPath(sample.path);
         await wait(1500);

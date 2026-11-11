@@ -70,6 +70,7 @@ const TABS = {
     group('Dosya', big('showInFolder', 'folder', 'Klasörde<br>göster') + big('uyapSettings', 'globe', 'Portal<br>adresi')),
   ],
   review: () => [
+    group('Ortak çalışma', big('collabToggle', 'globe', 'Ortak<br>çalışma', { title: 'OneDrive / eşitlenen klasördeki belgede başkalarıyla aynı anda çalışın' })),
     group('Yorumlar', big('commentNew', 'comment', 'Yeni<br>yorum', { title: 'Yeni yorum (Ctrl+Alt+M)' }) + col(
       btn('commentPrev', 'chevron', 'Önceki yorum', { label: 'Önceki', cls: 'flip' }) + btn('commentNext', 'chevron', 'Sonraki yorum', { label: 'Sonraki' }),
       btn('commentDelete', 'reject', 'Bu yorumu sil', { label: 'Sil' }) + btn('commentDeleteAll', 'tableDel', 'Belgedeki tüm yorumları sil', { label: 'Tümünü sil' }),

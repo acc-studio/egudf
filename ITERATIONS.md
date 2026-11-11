@@ -301,3 +301,54 @@ The **Tablo** tab (it appears when the cursor is in a table) gained:
 - **Testing:** smoke steps `spelling` and `spelling-ui` (detection,
   suggestions, typing behaviour, right-click, F7 change / ignore-all). The
   packaging test made sure the new spell service is in the installer.
+
+## 0.12.0: Working together on a OneDrive file (iteration 11)
+
+**What's possible:** Word's live co-authoring needs Microsoft's servers
+(SharePoint/WOPI), which can't host a .udf. So egUDF does it over the
+synced file. Everyone runs egUDF on the same .udf in a OneDrive folder;
+OneDrive moves the bytes and egUDF merges them. Dropbox, Google Drive and
+network folders work the same way.
+
+**How to use it:** Gözden Geçir → **Ortak çalışma** (or accept the prompt
+egUDF shows when someone else already has the file open).
+- **Auto-save and auto-merge:** your edits are saved about 1.5 s after you
+  stop typing. When someone else's version arrives, it is merged into your
+  open document, never overwritten:
+  - different paragraphs are simply combined;
+  - if you both changed the same paragraph at the same moment, yours stays
+    and theirs is inserted right after it as their **tracked change**, so
+    you choose with Kabul et / Reddet;
+  - comments and replies from both sides are kept;
+  - page setup and header/footer changes come across too.
+- **Who's here:** the status bar shows "Ortak: Ayşe Yılmaz". A coloured
+  initials badge sits in the margin beside the paragraph each person is
+  working in.
+- **Conflict copies:** if OneDrive ever creates a conflict copy
+  ("Dilekçe-PCADI.udf"), egUDF offers to merge it in, then moves it to the
+  Recycle Bin. It asks first, because a file with a similar name could be
+  your own.
+- **How it works without a server:** each person writes only their own
+  small hidden presence file next to the document
+  (~$Dilekçe.egudf-ad.json), so OneDrive never sees two people writing one
+  file. Presence disappears about 40 s after someone closes the document.
+- **What the other person needs:**
+  - egUDF;
+  - the shared folder synced to their PC (for a shared OneDrive link: "Add
+    shortcut to My files", or open it in the OneDrive app).
+  - A browser link alone isn't enough: OneDrive on the web can't open .udf.
+- **Limits:**
+  - Changes arrive as fast as OneDrive syncs, usually seconds, sometimes
+    longer. It is not keystroke-live like Word Online.
+  - Signed documents can't be shared this way (editing would void the
+    signature).
+  - If someone edits the file in the UYAP editor meanwhile, egUDF still
+    merges it, paragraph by paragraph.
+- **Tested** with a simulated second user writing to the same file:
+  - combining edits;
+  - my edits reaching the disk;
+  - a same-paragraph conflict;
+  - a save made outside egUDF (no false conflicts);
+  - presence;
+  - conflict-copy merge.
+  - Not tested: two real PCs on real OneDrive. That needs a second person.

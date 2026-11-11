@@ -22,6 +22,17 @@ contextBridge.exposeInMainWorld('native', {
   edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
   setTheme: (t) => ipcRenderer.invoke('theme:set', t),
   // Hunspell (main process); the editor draws its own underlines
+  collab: {
+    watch: (p) => ipcRenderer.invoke('collab:watch', p),
+    unwatch: (p) => ipcRenderer.invoke('collab:unwatch', p),
+    writePresence: (doc, user, data) => ipcRenderer.invoke('collab:presence:write', doc, user, data),
+    listPresence: (doc) => ipcRenderer.invoke('collab:presence:list', doc),
+    removePresence: (doc, user) => ipcRenderer.invoke('collab:presence:remove', doc, user),
+    trash: (p) => ipcRenderer.invoke('collab:trash', p),
+    synced: (p) => ipcRenderer.invoke('collab:synced', p),
+    onChanged: on('collab:changed'),
+    onConflictCopy: on('collab:conflict-copy'),
+  },
   spell: {
     check: (words) => ipcRenderer.invoke('spell:check', words),
     suggest: (w) => ipcRenderer.invoke('spell:suggest', w),
