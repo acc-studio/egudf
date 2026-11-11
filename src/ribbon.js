@@ -85,7 +85,7 @@ const TABS = {
     group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' })),
   ],
   view: () => [
-    group('Göster', big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
+    group('Göster', big('ruler', 'ruler', 'Cetvel') + big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
     group('Tema', big('theme', 'monitor', 'Sistem', { arg: 'system', title: 'Windows temasını izle' }) + big('theme', 'sun', 'Açık', { arg: 'light' }) + big('theme', 'theme', 'Koyu', { arg: 'dark' })),
     group('Yardım', big('shortcuts', 'key', 'Klavye<br>kısayolları') + big('wordCount', 'info', 'Sözcük<br>sayısı')),
     group('Yakınlaştır', big('zoom', 'zoomIn', '%100', { arg: '1' }) + big('zoomFit', 'page', 'Sayfa<br>genişliği') + big('zoom', 'zoomOut', '%75', { arg: '0.75' })),
@@ -156,7 +156,7 @@ export function createRibbon(app) {
     }
     $$('[data-cmd]', body).forEach((b) => {
       const c = b.dataset.cmd;
-      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks', 'theme', 'shortcuts'].includes(c);
+      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks', 'theme', 'shortcuts', 'ruler'].includes(c);
       if (b.tagName === 'BUTTON') b.disabled = !has && !docless;
       if (!ed) { b.classList.remove('active'); return; }
       let on = false;
@@ -173,6 +173,7 @@ export function createRibbon(app) {
         case 'formatPainter': on = !!app.painter; break;
         case 'reviewPane': on = !$('#review-pane').classList.contains('hidden'); break;
         case 'spellcheck': on = app.spell !== false; break;
+        case 'ruler': on = !!app.showRuler; break;
         case 'trackToggle': on = !!ed.storage.trackChanges?.enabled; break;
         case 'markup': on = (document.body.classList.contains('hide-markup') ? 'none' : 'all') === a; break;
         case 'toggleNav': on = !$('#nav-pane').classList.contains('hidden'); break;

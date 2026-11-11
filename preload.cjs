@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('native', {
   edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
   setTheme: (t) => ipcRenderer.invoke('theme:set', t),
   onContextMenu: on('context-menu'),
+  recovery: {
+    write: (key, json) => ipcRenderer.invoke('recovery:write', key, json),
+    remove: (key) => ipcRenderer.invoke('recovery:delete', key),
+    list: () => ipcRenderer.invoke('recovery:list'),
+  },
   egpdf: {
     available: () => ipcRenderer.invoke('egpdf:available'),
     open: (bytes, name) => ipcRenderer.invoke('egpdf:open', bytes, name),

@@ -15,6 +15,7 @@ import { commentsAt } from './review/comments.js';
 import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
+import { createRuler } from './ruler.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -77,6 +78,7 @@ function applyGeometry(tab) {
 
 function applyZoom(tab) {
   if (!tab?.sheet) return;
+  tab.ruler?.invalidate();
   tab.sheet.style.transform = `scale(${app.zoom})`;
   const box = tab.host.querySelector('.zoom-box');
   box.style.width = `${tab.geom.pageW * app.zoom}px`;
@@ -97,6 +99,8 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     onSelection: () => { if (tab === app.active) scheduleUI(); },
   });
   if (app.spell === false) tab.editor.view.dom.setAttribute('spellcheck', 'false');
+  tab.ruler = createRuler(app, tab);
+  tab.ruler.setVisible(app.showRuler);
   applyGeometry(tab);
   new ResizeObserver(() => applyZoom(tab)).observe(tab.sheet);
   app.tabs.push(tab);
@@ -148,6 +152,7 @@ async function closeTab(tab) {
     if (r === false || r === null) return false;
     if (r === true && !(await save(tab))) return false;
   }
+  native.recovery.remove(recoveryKey(tab));
   tab.editor.destroy();
   tab.host.remove();
   const i = app.tabs.indexOf(tab);
@@ -189,6 +194,7 @@ function drawOverlay(tab, L) {
 // ================================================================== documents
 
 function onDocChange(tab, tr) {
+  tab.rev = (tab.rev || 0) + 1;
   if (tr?.getMeta('reviewOnly')) { // comment anchors only: content.xml (and a signature) unaffected
     if (!tab.reviewDirty) { tab.reviewDirty = true; renderTabs(); }
     renderReview(app);
@@ -283,6 +289,8 @@ async function save(tab, { as = false } = {}) {
   }
   tab.reviewDirty = false;
   await native.writeFile(path, bytes);
+  native.recovery.remove(recoveryKey(tab));
+  tab._autoRev = tab.rev;
   tab.path = path;
   tab.title = baseName(path);
   tab.dirty = false;
@@ -763,6 +771,7 @@ async function runCmd(name, arg, el) {
     }
     case 'changePrev': stepChange(-1); return;
     case 'changeNext': stepChange(1); return;
+    case 'ruler': app.showRuler = !app.showRuler; localStorage.setItem('udf.ruler', app.showRuler ? '1' : '0'); for (const t of app.tabs) t.ruler?.setVisible(app.showRuler); scheduleUI(); return;
     case 'markup': document.body.classList.toggle('hide-markup', arg === 'none'); localStorage.setItem('udf.markup', arg); tab?.editor.commands.repaginate(); scheduleUI(); return;
     case 'commentDelete': { const ids = tab ? commentsAt(ed.state) : []; if (ids.length) ids.forEach((id) => deleteComment(app, id)); else toast('İmleç bir yorumun üzerinde değil.'); return; }
     case 'commentDeleteAll': deleteAllComments(app); return;
@@ -891,6 +900,50 @@ function stepChange(dir, afterResolve = false) {
   const next = dir > 0 ? list.find((c) => (afterResolve ? c.from >= pos : c.from > pos)) || list[0] : [...list].reverse().find((c) => c.to < pos) || list[list.length - 1];
   ed.chain().focus().setTextSelection({ from: next.from, to: next.to }).scrollIntoView().run();
   return true;
+}
+
+// ================================================================== crash recovery
+
+const SESSION = Date.now().toString(36);
+const recoveryKey = (tab) => `${SESSION}-${tab.id}`;
+
+/** Writes every unsaved tab that changed since its last snapshot. */
+async function autosave(force = false) {
+  for (const t of app.tabs) {
+    if (!isDirty(t) || (!force && t._autoRev === t.rev)) continue;
+    t._autoRev = t.rev;
+    const data = { v: 1, session: SESSION, title: t.title, path: t.path, at: new Date().toISOString(), meta: t.meta, doc: t.editor.getJSON(), review: t.review };
+    try { await native.recovery.write(recoveryKey(t), JSON.stringify(data)); } catch (e) { console.warn('autosave failed', e); }
+  }
+}
+app.autosave = autosave;
+
+async function offerRecovery() {
+  const list = (await native.recovery.list()).filter((r) => r.data?.session !== SESSION && r.data?.doc);
+  if (!list.length) return;
+  list.sort((a, b) => String(b.data.at).localeCompare(String(a.data.at)));
+  const body = h(`<div><p style="margin-top:0;line-height:1.5">egUDF beklenmedik şekilde kapanmış. Kaydedilmemiş ${list.length} belge kurtarıldı:</p>
+    <div class="recover-list">${list.map((r) => `<label class="recover-item"><input type="checkbox" checked data-key="${esc(r.key)}"><div><b>${esc(r.data.title)}</b><div class="dim small">${esc(fmtDate(r.data.at))}${r.data.path ? ` · ${esc(r.data.path)}` : ''}</div></div></label>`).join('')}</div></div>`);
+  modal({
+    title: 'Belge kurtarma', icon: 'history', body, width: 560,
+    actions: [
+      { label: 'Kurtarılanları sil', kind: 'danger', left: true, onClick: async () => { for (const r of list) await native.recovery.remove(r.key); } },
+      { label: 'Sonra' },
+      { label: 'Seçilenleri aç', kind: 'primary', onClick: async () => {
+        const keys = new Set([...body.querySelectorAll('input:checked')].map((i) => i.dataset.key));
+        for (const r of list) {
+          if (!keys.has(r.key)) continue;
+          const d = r.data;
+          const t = newTab({ title: d.title, path: d.path, doc: d.doc, meta: d.meta, review: d.review });
+          t.dirty = true;
+          t._recovered = true;
+          await native.recovery.remove(r.key);
+          renderTabs();
+        }
+        if (keys.size) toast('Kurtarılan belgeler açıldı — kaydetmeyi unutmayın.', { type: 'ok', ms: 5000 });
+      } },
+    ],
+  });
 }
 
 function captureFormat(ed) {
@@ -1040,6 +1093,7 @@ let wcTimer = null;
 let lastSel = null;
 function refreshUI() {
   ribbon?.refresh();
+  app.active?.ruler?.refresh();
   const sel = app.active ? `${app.active.id}:${app.active.editor.state.selection.from}` : null;
   if (sel !== lastSel) { lastSel = sel; renderReview(app); }
   const tab = app.active;
@@ -1102,6 +1156,8 @@ function wireChrome() {
     return [{ label: 'Yeni yorum', icon: 'comment', kbd: 'Ctrl+Alt+M', onClick: () => runCmd('commentNew') }, ...(ids.length ? [{ label: 'Yorumu sil', icon: 'reject', onClick: () => runCmd('commentDelete') }] : [])];
   });
   app.spell = localStorage.getItem('udf.spell') !== '0';
+  app.showRuler = localStorage.getItem('udf.ruler') !== '0';
+  setInterval(() => autosave(), 30000);
   app.changeItems = (t) => changeList(t.editor.state.doc);
   app.resolveChange = (it, accept) => { resolveChanges(app.ed(), it.from, it.to, accept); renderReview(app); };
   app.focusChange = (it) => app.ed()?.chain().focus().setTextSelection({ from: it.from, to: it.to }).scrollIntoView().run();
@@ -1218,7 +1274,7 @@ function wireChrome() {
     const dirty = app.tabs.filter(isDirty);
     if (!dirty.length) { native.closeOk(); return; }
     const r = await confirmBox({ title: 'Kaydedilmemiş değişiklikler', text: `${dirty.map((t) => `<b>${esc(t.title)}</b>`).join(', ')} kaydedilmedi.`, ok: 'Kaydet ve çık', extra: { label: 'Kaydetmeden çık', value: 'discard', kind: 'danger' } });
-    if (r === 'discard') { native.closeOk(); return; }
+    if (r === 'discard') { for (const t of app.tabs) await native.recovery.remove(recoveryKey(t)); native.closeOk(); return; }
     if (r !== true) return;
     for (const t of dirty) { activate(t); if (!(await save(t))) return; }
     native.closeOk();
@@ -1228,7 +1284,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1243,6 +1299,31 @@ window.__smoke = {
         await wait(300);
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'ruler': {
+        const t = newDocument('blank');
+        await wait(300);
+        t.editor.chain().focus().insertContent('Ruler test paragraph').run();
+        t.editor.commands.setParagraphAttrs({ leftIndent: 28.3465, firstLineIndent: 14.17 });
+        t.ruler.refresh();
+        const hang = t.host.querySelector('.rh-hang');
+        const first = t.host.querySelector('.rh-first');
+        const pageLeft = t.host.querySelector('.ruler-inner').getBoundingClientRect().left;
+        const dx = (hang.getBoundingClientRect().left + 5 - pageLeft) / app.zoom - t.geom.left;
+        const visible = !!t.host.querySelector('.ruler:not(.hidden)');
+        return { ok: visible && Math.abs(dx - 28.3465 * PT_TO_PX) < 3 && first.getBoundingClientRect().left > hang.getBoundingClientRect().left, dx };
+      }
+      case 'recovery': {
+        const t = app.active;
+        t.editor.chain().focus().insertContent(' kurtar').run();
+        await autosave(true);
+        const list = await native.recovery.list();
+        const mine = list.find((r) => r.key === `${SESSION}-${t.id}`);
+        const ok = !!mine && JSON.stringify(mine.data.doc).includes('kurtar');
+        t.dirty = false;
+        await closeTab(t);
+        const gone = !(await native.recovery.list()).some((r) => r.key === `${SESSION}-${t.id}`);
+        return { ok: ok && gone, found: !!mine, gone };
       }
       case 'track': {
         const t = newDocument('blank');
@@ -1478,5 +1559,6 @@ window.__smoke = {
   ribbon = createRibbon(app);
   try { const st = await native.settings.get(); app.profile = st.profile || {}; app.theme = st.theme || 'system'; } catch {}
   renderWelcome();
+  if (!(await native.info()).smoke) setTimeout(offerRecovery, 600);
   activate(null);
 })();

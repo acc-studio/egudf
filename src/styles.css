@@ -383,3 +383,28 @@ body.hide-markup .udf-doc ins.udf-ins { text-decoration: none; color: inherit; }
 .rb.badc .ic { color: var(--danger); }
 #review-pane .nav-head > span:first-child { white-space: nowrap; }
 #review-pane #rv-count { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-weight: 400; }
+
+/* ---------- iteration 4: ruler, recovery ---------- */
+.ruler { position: sticky; top: -28px; z-index: 5; margin: -28px auto 8px; padding-top: 6px; background: var(--canvas); height: 30px; }
+.ruler.hidden { display: none; }
+.ruler-inner { position: relative; height: 22px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; }
+.ruler-scale { display: block; }
+.ruler-scale .rm { fill: var(--surface-2); }
+.ruler-scale line { stroke: var(--text-dim); stroke-width: 1; }
+.ruler-scale text { fill: var(--text-dim); font: 9px "Segoe UI", system-ui, sans-serif; text-anchor: middle; }
+.rh { position: absolute; width: 11px; margin-left: -5.5px; cursor: ew-resize; touch-action: none; }
+.rh::before { content: ""; position: absolute; left: 0; border-left: 5.5px solid transparent; border-right: 5.5px solid transparent; }
+.rh-first { top: -1px; height: 7px; }
+.rh-first::before { top: 0; border-top: 7px solid var(--accent); }
+.rh-hang { top: 9px; height: 7px; }
+.rh-hang::before { bottom: 0; border-bottom: 7px solid var(--accent); }
+.rh-left { top: 16px; height: 6px; background: var(--accent); border-radius: 1px; width: 9px; margin-left: -4.5px; }
+.rh-right { top: 9px; height: 7px; }
+.rh-right::before { bottom: 0; border-bottom: 7px solid var(--accent); }
+.ruler-inner.no-para .rh { display: none; }
+.ruler-tabs i { position: absolute; bottom: 1px; width: 6px; height: 6px; margin-left: -1px; border-left: 2px solid var(--text); border-bottom: 2px solid var(--text); pointer-events: none; opacity: .7; }
+.ruler-guide { position: absolute; width: 0; border-left: 1px dashed var(--accent); pointer-events: none; z-index: 6; }
+.ruler-guide.hidden { display: none; }
+.recover-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }
+.recover-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.recover-item input { margin-top: 3px; }

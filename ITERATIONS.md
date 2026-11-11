@@ -99,3 +99,23 @@ change is committed and pushed, and an installer
 - **Limitations:** formatting changes (bold, size…) and paragraph
   splits/joins are not tracked; text changes are.
 - **Fix:** comment and change times are shown in local time.
+
+## 0.5.0: Ruler and crash recovery (iteration 4)
+
+- **Ruler (Cetvel):** a centimetre ruler above the page that stays visible
+  while scrolling and follows the zoom. Margins are shaded and the current
+  paragraph's tab stops are shown.
+  - Drag the markers like in Word: first-line ▽ (top), hanging △, left
+    indent ■ (moves both), right indent △.
+  - Drags snap to 0,25 cm; hold Alt for free movement. A dashed guide line
+    shows the position while dragging.
+  - Double-click the ruler to open the paragraph dialog.
+  - Turn it on/off under Görünüm → Cetvel (remembered).
+- **Crash recovery:** every 30 seconds, unsaved documents (text, comments,
+  tracked changes, page settings) are written to the egUDF profile folder.
+  - If egUDF closes unexpectedly, the next start offers them in "Belge
+    kurtarma". Pick the ones to reopen, or delete them.
+  - Snapshots are removed when you save, close or deliberately discard a
+    document, so the prompt only appears after a real crash.
+- **Smoke test harness:** screenshots are now forced to repaint, so visual
+  checks see the current state.

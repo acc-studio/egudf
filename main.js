@@ -208,6 +208,23 @@ ipcMain.handle('edit:do', (e, role, arg) => {
   else if (role === 'addWord') wc.session.addWordToSpellCheckerDictionary(String(arg));
   else if (['cut', 'copy', 'paste', 'pasteAndMatchStyle', 'selectAll'].includes(role)) wc[role]();
 });
+// crash recovery: unsaved documents, written every 30 s by the renderer
+const recoveryDir = () => path.join(app.getPath('userData'), 'recovery');
+const recoveryFile = (key) => path.join(recoveryDir(), `${String(key).replace(/[^\w-]/g, '')}.json`);
+ipcMain.handle('recovery:write', (_e, key, json) => {
+  fs.mkdirSync(recoveryDir(), { recursive: true });
+  const f = recoveryFile(key);
+  fs.writeFileSync(`${f}.tmp`, json);
+  fs.renameSync(`${f}.tmp`, f);
+});
+ipcMain.handle('recovery:delete', (_e, key) => { try { fs.unlinkSync(recoveryFile(key)); } catch {} });
+ipcMain.handle('recovery:list', () => {
+  try {
+    return fs.readdirSync(recoveryDir()).filter((n) => n.endsWith('.json')).map((n) => {
+      try { return { key: n.slice(0, -5), data: JSON.parse(fs.readFileSync(path.join(recoveryDir(), n), 'utf8')) }; } catch { return null; }
+    }).filter(Boolean);
+  } catch { return []; }
+});
 ipcMain.handle('theme:set', (_e, t) => {
   if (!['light', 'dark', 'system'].includes(t)) return null;
   nativeTheme.themeSource = t;
@@ -359,7 +376,11 @@ async function runSmoke() {
   fs.mkdirSync(out, { recursive: true });
   win.setSize(1440, 940);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const shot = async (name) => fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  const shot = async (name) => {
+    win.webContents.invalidate(); // hidden windows only repaint on demand: force a fresh frame
+    await wait(150);
+    fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  };
   await wait(800);
   if (flag('pgdebug') != null) await win.webContents.executeJavaScript('window.__pgDebugOnly = true');
   let steps = await win.webContents.executeJavaScript('window.__smoke.steps()');
