@@ -52,7 +52,11 @@ export function contextMenu(app, p) {
         t('addRowBefore', 'Üste satır ekle', 'rowAdd'), t('addRowAfter', 'Alta satır ekle', 'rowAdd'),
         t('addColumnBefore', 'Sola sütun ekle', 'colAdd'), t('addColumnAfter', 'Sağa sütun ekle', 'colAdd'),
         t('deleteRow', 'Satırı sil', 'rowDel'), t('deleteColumn', 'Sütunu sil', 'colDel'),
-        t('mergeCells', 'Hücreleri birleştir', 'merge'), t('deleteTable', 'Tabloyu sil', 'tableDel'));
+        t('mergeCells', 'Hücreleri birleştir', 'merge'), t('deleteTable', 'Tabloyu sil', 'tableDel'),
+        { label: 'Satırı seç', icon: 'select', onClick: () => app.run('tableSelect', 'row') },
+        { label: 'Sütunu seç', icon: 'select', onClick: () => app.run('tableSelect', 'column') },
+        { label: 'Sütunları eşitle', icon: 'distribute', onClick: () => app.run('tableDistribute') },
+        { label: 'Sırala…', icon: 'sort', onClick: () => app.run('tableSortMenu', null, at(p.x, p.y)) });
     }
     items.push({ sep: true },
       { label: 'Paragraf…', icon: 'lineSpacing', onClick: () => app.run('paragraphDialog') },

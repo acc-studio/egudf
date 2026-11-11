@@ -193,12 +193,15 @@ export const LegalKeys = Extension.create({
 
 function paragraphsInSelection(state) {
   const out = [];
-  const { from, to } = state.selection;
-  state.doc.nodesBetween(from, to, (node, pos) => {
-    if (node.type.name === 'paragraph') { out.push({ node, pos }); return false; }
-    return true;
-  });
-  return out;
+  const seen = new Set();
+  // every range: a cell selection covers several disjoint cells
+  for (const { $from, $to } of state.selection.ranges) {
+    state.doc.nodesBetween($from.pos, $to.pos, (node, pos) => {
+      if (node.type.name === 'paragraph') { if (!seen.has(pos)) { seen.add(pos); out.push({ node, pos }); } return false; }
+      return true;
+    });
+  }
+  return out.sort((a, b) => a.pos - b.pos);
 }
 
 function maxListId(doc) {

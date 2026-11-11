@@ -204,3 +204,31 @@ change is committed and pushed, and an installer
 - **Testing:** new smoke steps `fmttrack` and `find`, unit tests for search;
   smoke screenshots now always show the current state (they could lag one
   step behind).
+
+## 0.9.0: Table tools (iteration 8)
+
+The **Tablo** tab (it appears when the cursor is in a table) gained:
+- **Seç:** select the cell, row, column or the whole table. Formatting and
+  alignment then apply to every selected cell (this also fixes alignment
+  buttons acting only on the first cell of a cell selection).
+- **Hücre boyutu:**
+  - **Sütunları eşitle** gives all columns the same width.
+  - **Sayfaya sığdır** stretches or shrinks the table to the text width,
+    keeping the column proportions.
+  - **Sütun genişliği…** sets a column to an exact width in cm; the other
+    columns give up the difference, so the table width doesn't change.
+- **Hizalama:** left/centre/right/justify for the selected cells.
+- **Sırala:** sorts the rows by the column the cursor is in, A → Z or Z → A.
+  - Uses Turkish alphabetical order (Ç after C, İ after I), and numbers by
+    value (30 < 200 < 1500).
+  - Dates such as 05.03.2024 sort by date.
+  - A bold first row is treated as a header and stays on top; this can be
+    switched in the menu.
+  - Refuses (with a message) when cells are merged vertically.
+- **Metne dönüştür:** turns a table into tab-separated paragraphs.
+- **Ekle → Metinden tablo:** turns selected paragraphs into a table, split at
+  tabs, or at ";" when there are no tabs.
+- The right-click menu inside a table also offers select row/column, equal
+  columns and sort.
+- **Testing:** smoke step `tabletools` checks every tool: sort orders,
+  widths, alignment, table → text → table, and UDF output.

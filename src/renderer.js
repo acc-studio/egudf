@@ -17,6 +17,7 @@ import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
+import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
@@ -913,6 +914,35 @@ async function runCmd(name, arg, el) {
       if (typeof c[arg] === 'function') c[arg]().run();
       return;
     }
+    case 'tableSelectMenu': menu(el, [['cell', 'Hücre'], ['row', 'Satır'], ['column', 'Sütun'], ['table', 'Tablo']].map(([k, l]) => ({ label: l, onClick: () => selectTablePart(ed, k) }))); return;
+    case 'tableSelect': selectTablePart(ed, arg); return;
+    case 'tableDistribute': distributeColumns(ed, textWidthPx(tab)); return;
+    case 'tableFit': fitColumns(ed, textWidthPx(tab)); return;
+    case 'tableColWidth': {
+      const cur = currentColumnWidth(ed, textWidthPx(tab));
+      if (cur == null) return;
+      const v = await promptBox({ title: 'Sütun genişliği', label: 'Genişlik (cm)', value: (cur / PX_PER_CM).toFixed(2).replace('.', ','), ok: 'Uygula', icon: 'colWidth' });
+      const cm = parseFloat(String(v ?? '').replace(',', '.'));
+      if (cm > 0) setColumnWidth(ed, cm * PX_PER_CM, textWidthPx(tab));
+      return;
+    }
+    case 'tableAlign': chain().setParagraphAttrs({ align: arg }).run(); return;
+    case 'tableSortMenu': {
+      const r = cellRect(ed.state);
+      if (!r) return;
+      const head = sortHeader(r);
+      const run = (desc, header) => { const res = sortRows(ed, { desc, header }); if (res !== true) toast(res, { type: 'warn' }); };
+      menu(el, [
+        { label: `${r.left + 1}. sütuna göre A → Z (0 → 9)`, icon: 'sort', onClick: () => run(false, head) },
+        { label: `${r.left + 1}. sütuna göre Z → A (9 → 0)`, onClick: () => run(true, head) },
+        { sep: true },
+        { label: head ? 'İlk satır başlık: sabit kalır' : 'İlk satır da sıralanır', disabled: true },
+        { label: head ? 'İlk satırı da sırala (A → Z)' : 'İlk satırı başlık say (A → Z)', onClick: () => run(false, !head) },
+      ]);
+      return;
+    }
+    case 'tableToText': if (tableToText(ed)) toast('Tablo metne dönüştürüldü', { ms: 1500 }); return;
+    case 'textToTable': if (!textToTable(ed, textWidthPx(tab))) toast('Dönüştürülecek paragraf yok.'); return;
     case 'tableBorder': {
       const { $from } = ed.state.selection;
       for (let d = $from.depth; d > 0; d--) {
@@ -983,6 +1013,18 @@ async function runCmd(name, arg, el) {
 }
 
 /** Selects the next/previous tracked change. → false when there is none. */
+/** Width of the text area in editor px (what table colwidths are measured in). */
+function textWidthPx(tab) { return Math.floor(tab.geom.pageW - tab.geom.left - tab.geom.right); }
+
+/** A first row looks like a header when it is bold or the others start with digits and it doesn't. */
+function sortHeader(r) {
+  const first = r.node.firstChild;
+  if (!first || r.node.childCount < 3) return false;
+  let bold = true;
+  first.descendants((n) => { if (n.isText && !n.marks.some((m) => m.type.name === 'bold')) bold = false; });
+  return bold && first.textContent.trim().length > 0;
+}
+
 function stepChange(dir, afterResolve = false) {
   const ed = app.ed();
   if (!ed) return false;
@@ -1438,7 +1480,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1460,7 +1502,70 @@ window.__smoke = {
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
       }
+      case 'tabletools': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        const W = textWidthPx(t);
+        const P = (text, bold) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text, ...(bold ? { marks: [{ type: 'bold' }] } : {}) }] });
+        const row = (cells, bold) => ({ type: 'tableRow', attrs: { udf: {} }, content: cells.map((c) => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [Math.floor(W / 3)], udf: {} }, content: [P(c, bold)] })) });
+        ed.commands.setContent({ type: 'doc', content: [P('Alacaklılar:'), { type: 'table', attrs: { udf: {} }, content: [row(['Ad', 'Tarih', 'Tutar'], true), row(['Zeynep', '05.03.2024', '1500']), row(['Ahmet', '12.01.2023', '200']), row(['Çağla', '01.12.2023', '30'])] }, P('Son.')] });
+        const colText = (c) => { const out = []; ed.state.doc.descendants((n) => { if (n.type.name === 'tableRow') { out.push(n.child(c).textContent); return false; } return true; }); return out.join(','); };
+        const cellPos = (r, c) => { let p = null; let ri = -1; ed.state.doc.descendants((n, pos) => { if (p != null) return false; if (n.type.name === 'tableRow') { ri++; if (ri === r) { let off = pos + 1; for (let i = 0; i < c; i++) off += n.child(i).nodeSize; p = off + 2; } return false; } return true; }); return p; };
+        const widths = () => { const w = []; ed.state.doc.descendants((n) => { if (n.type.name === 'tableRow' && !w.length) { n.forEach((c) => w.push(c.attrs.colwidth?.[0])); return false; } return true; }); return w; };
+        const r = {};
+        ed.commands.setTextSelection(cellPos(1, 0));
+        r.header = sortHeader(cellRect(ed.state));
+        sortRows(ed, { header: r.header });
+        r.byName = colText(0);
+        ed.commands.setTextSelection(cellPos(1, 2));
+        sortRows(ed, { header: true, desc: true });
+        r.byAmountDesc = colText(0);
+        ed.commands.setTextSelection(cellPos(1, 1));
+        sortRows(ed, { header: true });
+        r.byDate = colText(0);
+        ed.commands.setTextSelection(cellPos(1, 0));
+        setColumnWidth(ed, 5 * PX_PER_CM, W);
+        const w1 = widths();
+        r.col5cm = Math.abs(w1[0] - 5 * PX_PER_CM) < 2 && Math.abs(w1.reduce((s, x) => s + x, 0) - W) < 4;
+        distributeColumns(ed, W);
+        const w2 = widths();
+        r.equal = w2.every((x) => Math.abs(x - w2[0]) <= 1);
+        ed.commands.setTextSelection(cellPos(1, 0));
+        setColumnWidth(ed, 2 * PX_PER_CM, W);
+        fitColumns(ed, W * 0.8);
+        r.fit = Math.abs(widths().reduce((s, x) => s + x, 0) - W * 0.8) < 4;
+        fitColumns(ed, W);
+        // select a row, centre it
+        ed.commands.setTextSelection(cellPos(2, 1));
+        selectTablePart(ed, 'row');
+        r.rowRanges = ed.state.selection.ranges.length;
+        runCmd('tableAlign', 'center');
+        let centred = 0; ed.state.doc.descendants((n) => { if (n.type.name === 'tableRow') { n.forEach((c) => { if (c.firstChild.attrs.align === 'center') centred++; }); return false; } return true; });
+        r.centred = centred;
+        // table → text → table
+        const before = colText(0) + '|' + colText(2);
+        ed.commands.setTextSelection(cellPos(1, 0));
+        tableToText(ed);
+        r.asText = ed.state.doc.child(1).textContent;
+        const n = ed.state.doc.childCount;
+        ed.commands.setTextSelection({ from: ed.state.doc.child(0).nodeSize + 1, to: ed.state.doc.content.size - ed.state.doc.child(n - 1).nodeSize - 1 });
+        textToTable(ed, W);
+        r.back = colText(0) + '|' + colText(2) === before;
+        // UDF round trip of the result
+        const xml = serializeUdfXml(ed.getJSON(), t.meta);
+        r.cols = /columnCount="3"/.test(xml);
+        r.text = docText(parseUdfXml(xml).doc).includes('Ahmet');
+        ed.commands.setTextSelection(cellPos(1, 0));
+        refreshUI();
+        ribbon.show('table');
+        await wait(250);
+        r.ok = r.header && r.byName === 'Ad,Ahmet,Çağla,Zeynep' && r.byAmountDesc === 'Ad,Zeynep,Ahmet,Çağla' && r.byDate === 'Ad,Ahmet,Çağla,Zeynep' && r.col5cm && r.equal && r.fit && r.rowRanges === 3 && r.centred === 3 && r.asText === 'Ad\tTarih\tTutar' && r.back && r.cols && r.text;
+        t.dirty = false;
+        return r;
+      }
       case 'autocorrect': {
+        ribbon.show('home');
         const t = newDocument('blank');
         await wait(200);
         const ed = t.editor;

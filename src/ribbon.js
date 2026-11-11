@@ -47,7 +47,7 @@ const TABS = {
     group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }), btn('selectAll', 'page', 'Tümünü seç (Ctrl+A)', { label: 'Tümünü seç' }))),
   ],
   insert: () => [
-    group('Tablolar', big('tableMenu', 'table', 'Tablo')),
+    group('Tablolar', big('tableMenu', 'table', 'Tablo') + col(btn('textToTable', 'textTable', 'Seçili paragrafları tabloya dönüştür (sekme veya ; ile ayrılmış)', { label: 'Metinden tablo' }))),
     group('Çizimler', big('image', 'image', 'Resim')),
     group('Metin', big('dateMenu', 'date', 'Tarih') + big('symbolMenu', 'symbol', 'Simge') + big('blockMenu', 'block', 'Hazır<br>bloklar')),
     group('Belge', big('newFromTemplate', 'template', 'Şablondan<br>yeni') + big('templateSave', 'save', 'Şablon olarak<br>kaydet')),
@@ -100,7 +100,18 @@ const TABS = {
       btn('table', 'rowDel', 'Satırı sil', { arg: 'deleteRow', label: 'Satır' }) + btn('table', 'colDel', 'Sütunu sil', { arg: 'deleteColumn', label: 'Sütun' }),
       btn('table', 'tableDel', 'Tabloyu sil', { arg: 'deleteTable', label: 'Tablo' }),
     )),
+    group('Seç', big('tableSelectMenu', 'select', 'Seç')),
     group('Birleştir', col(btn('table', 'merge', 'Hücreleri birleştir', { arg: 'mergeCells', label: 'Birleştir' }), btn('table', 'merge', 'Hücreyi böl', { arg: 'splitCell', label: 'Böl' }))),
+    group('Hücre boyutu', col(
+      btn('tableDistribute', 'distribute', 'Sütun genişliklerini eşitle', { label: 'Sütunları eşitle' }),
+      btn('tableFit', 'fit', 'Tabloyu yazı alanının genişliğine sığdır', { label: 'Sayfaya sığdır' }),
+      btn('tableColWidth', 'colWidth', 'Seçili sütunun genişliği (cm)', { label: 'Sütun genişliği…' }),
+    )),
+    group('Hizalama', col(
+      btn('tableAlign', 'alignLeft', 'Hücre metnini sola hizala', { arg: 'left' }) + btn('tableAlign', 'alignCenter', 'Hücre metnini ortala', { arg: 'center' }),
+      btn('tableAlign', 'alignRight', 'Hücre metnini sağa hizala', { arg: 'right' }) + btn('tableAlign', 'alignJustify', 'Hücre metnini iki yana yasla', { arg: 'justify' }),
+    )),
+    group('Veri', big('tableSortMenu', 'sort', 'Sırala') + col(btn('tableToText', 'textTable', 'Tabloyu sekmeyle ayrılmış metne dönüştür', { label: 'Metne dönüştür' }))),
     group('Kenarlık', big('tableBorder', 'border', 'Kenarlıkları<br>aç/kapat')),
   ],
 };
