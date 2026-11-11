@@ -232,3 +232,34 @@ The **Tablo** tab (it appears when the cursor is in a table) gained:
   columns and sort.
 - **Testing:** smoke step `tabletools` checks every tool: sort orders,
   widths, alignment, table → text → table, and UDF output.
+
+## 0.10.0: Page numbers and header/footer editing (iteration 9)
+
+- **Page number menu:** Ekle/Düzen → Sayfa numarası.
+  - **Format:** "1", "1 / 5", "Sayfa 1", "Sayfa 1 / 5".
+  - **Position:** bottom right/centre/left, or top right/centre.
+  - Also: "Biçimlendir…" and remove.
+- **Header/footer dialog** has a page-number section: format, position,
+  top/bottom, first number (for a document continuing another one), bold.
+- **Double-click** in a page's top or bottom margin opens the header/footer
+  dialog at that part, as in Word.
+- **Go to page:** Ctrl+G, or click "Sayfa 3 / 12" in the status bar.
+- **Editor, PDF and Word all follow these settings.** In Word, page numbers
+  become PAGE/NUMPAGES fields in the right place. Importing Word page
+  numbers brings their position, "Sayfa" prefix and separator. A
+  first-page-only header no longer hides the footer in Word.
+- **How UYAP stores this:** `pageNumber-spec="BSP32_<flags>"` is
+  undocumented. The UYAP files in Downloads show:
+  - 2048 means "with total". Only those files have a separator.
+  - The other flags look like position bits.
+  - The values egUDF writes are exactly the ones in your UYAP files
+    (2120 = 1 / N bottom right, 2088 = 1 / N bottom centre, 72 = 1 bottom
+    right, 40 = 1 bottom centre).
+  - **Change you may notice:** older egUDF builds showed "1 / N" for every
+    document with page numbers. Now a document saved with plain numbers
+    shows only "1", which is how its flags read. The top-of-page and
+    start-number options use the same reading but don't appear in any of
+    your files, so check them once in UYAP before relying on them.
+- **Testing:** smoke steps `pagenum` (labels, spec, PDF, Word round trip in
+  both positions, go to page) and `hfdialog`, plus unit tests for the flag
+  mapping.

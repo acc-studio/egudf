@@ -10,6 +10,7 @@
 // style inheritance (docDefaults → pStyle → rStyle → direct), numbering
 // formats mapped to UYAP list types, fields reduced to their result text, and
 // line/page breaks turned into paragraph breaks (UDF has no in-paragraph break).
+import { readPageNumber, writePageNumber } from '../udf/pagenum.js';
 import { DOMParser } from '@xmldom/xmldom';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { listLabel, A4 } from '../udf/common.js';
@@ -212,22 +213,35 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   // header / footer
   const parts = {};
   let headerRef = '', footerRef = '';
-  const hdrXml = (tag, content, pageNo) => {
+  const fld = (instr) => `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ${instr} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+  const pnPara = (pn) => `<w:p><w:pPr><w:jc w:val="${pn.pos === 'left' ? 'left' : pn.pos === 'center' ? 'center' : 'right'}"/></w:pPr>${pn.prefix ? `<w:r><w:t xml:space="preserve">${x(pn.prefix)}</w:t></w:r>` : ''}${fld('PAGE')}${pn.total ? `<w:r><w:t xml:space="preserve"> ${x(pn.sep)} </w:t></w:r>${fld('NUMPAGES')}` : ''}</w:p>`;
+  const hdrXml = (tag, content, pn) => {
     let inner = blocks(content || [], contentTw);
-    if (pageNo) inner += `<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> ${x(pageNo)} </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>`;
+    if (pn) inner = tag === 'hdr' ? pnPara(pn) + inner : inner + pnPara(pn);
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:${tag} ${NS}>${inner || '<w:p/>'}</w:${tag}>`;
   };
   const hasContent = (c) => (c || []).some((b) => b.type !== 'paragraph' || (b.content || []).length);
-  if (meta.header && hasContent(meta.header.content)) {
-    parts['word/header1.xml'] = hdrXml('hdr', meta.header.content);
-    headerRef = `<w:headerReference w:type="default" r:id="${rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', 'header1.xml')}"/>`;
-  }
-  const pageNo = meta.footer?.attrs?.['pageNumber-spec'] ? (meta.footer.attrs['pageNumber-seperator'] || '/') : null;
-  if (meta.footer && (hasContent(meta.footer.content) || pageNo)) {
-    parts['word/footer1.xml'] = hdrXml('ftr', hasContent(meta.footer.content) ? meta.footer.content : [], pageNo);
-    footerRef = `<w:footerReference w:type="default" r:id="${rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', 'footer1.xml')}"/>`;
-  }
+  const pnAll = readPageNumber(meta.footer?.attrs);
+  const pnTop = pnAll.on && pnAll.vert === 'top' ? pnAll : null;
+  const pnBottom = pnAll.on && pnAll.vert === 'bottom' ? pnAll : null;
   const titlePg = meta.header && parseFloat(meta.header.attrs?.startPage) > 1;
+  const HREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header';
+  if ((meta.header && hasContent(meta.header.content)) || pnTop) {
+    parts['word/header1.xml'] = hdrXml('hdr', meta.header?.content, pnTop);
+    headerRef = `<w:headerReference w:type="default" r:id="${rel(HREL, 'header1.xml')}"/>`;
+    // first page without the header text (UDF startPage=2) but with a top page number
+    if (titlePg && pnTop) {
+      parts['word/header2.xml'] = hdrXml('hdr', [], pnTop);
+      headerRef += `<w:headerReference w:type="first" r:id="${rel(HREL, 'header2.xml')}"/>`;
+    }
+  }
+  if (meta.footer && (hasContent(meta.footer.content) || pnBottom)) {
+    parts['word/footer1.xml'] = hdrXml('ftr', hasContent(meta.footer.content) ? meta.footer.content : [], pnBottom);
+    const fid = rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', 'footer1.xml');
+    footerRef = `<w:footerReference w:type="default" r:id="${fid}"/>`;
+    // UDF's startPage only hides the header: Word's titlePg would hide the footer too
+    if (titlePg) footerRef += `<w:footerReference w:type="first" r:id="${fid}"/>`;
+  }
   const sect = `<w:sectPr>${headerRef}${footerRef}<w:pgSz w:w="${pageW}" w:h="${pageH}"${land ? ' w:orient="landscape"' : ''}/><w:pgMar w:top="${margin('topMargin', 56.7)}" w:right="${margin('rightMargin', 70.875)}" w:bottom="${margin('bottomMargin', 56.7)}" w:left="${margin('leftMargin', 70.875)}" w:header="${margin('headerFOffset', 20)}" w:footer="${margin('footerFOffset', 20)}" w:gutter="0"/>${titlePg ? '<w:titlePg/>' : ''}</w:sectPr>`;
 
   // numbering
@@ -654,19 +668,31 @@ export function importDocx(bytes) {
       return id && docRels[id] ? resolveTarget(docRels[id]) : null;
     };
     const hp = ref('header'), fp = ref('footer');
+    // a PAGE field in the header/footer becomes UYAP's page number; its paragraph is dropped
+    let pn = null;
+    const takePn = (path, blocks, vert) => {
+      const src = strFromU8(files[path]);
+      if (!/\bPAGE\b/.test(src) || pn) return blocks;
+      const o = { vert, pos: 'right', total: /\bNUMPAGES\b/.test(src), prefix: '', sep: '/' };
+      const RE = /^\s*((?:sayfa|page)\s*)?\d+(?:\s*([/|-]|of)\s*\d+)?\s*$/i;
+      const rest = blocks.filter((bl) => {
+        const m = RE.exec((bl.content || []).map((c) => c.text || '').join(''));
+        if (!m) return true;
+        if (m[1]) o.prefix = 'Sayfa ';
+        if (m[2] && m[2].toLowerCase() !== 'of') o.sep = m[2];
+        o.pos = bl.attrs?.align === 'center' ? 'center' : bl.attrs?.align === 'left' ? 'left' : 'right';
+        return false;
+      });
+      if (rest.length < blocks.length || vert === 'bottom') pn = o;
+      return rest;
+    };
     if (hp && files[hp]) {
-      const hc = parseBlocks(xml(hp).documentElement, relsOf(hp));
-      if (hc.some((b) => b.content?.length)) meta.header = { attrs: { background: '-1', foreground: '-8355712', startPage: kid(sect, 'titlePg') ? '2' : '1' }, content: hc };
+      const hc = takePn(hp, parseBlocks(xml(hp).documentElement, relsOf(hp)), 'top');
+      if (hc.some((bl) => bl.content?.length)) meta.header = { attrs: { background: '-1', foreground: '-8355712', startPage: kid(sect, 'titlePg') ? '2' : '1' }, content: hc };
     }
-    if (fp && files[fp]) {
-      const fdom = xml(fp);
-      const hasPage = /\bPAGE\b/.test(strFromU8(files[fp]));
-      let fc = parseBlocks(fdom.documentElement, relsOf(fp));
-      if (hasPage) fc = fc.filter((b) => !/^\s*\d+(\s*[/|-]\s*\d+)?\s*$/.test((b.content || []).map((c) => c.text || '').join('')));
-      const attrs = { background: '-1', foreground: '-8355712' };
-      if (hasPage) Object.assign(attrs, { 'pageNumber-spec': 'BSP32_72', 'pageNumber-fontFace': 'Arial', 'pageNumber-fontSize': '11', 'pageNumber-fontBold': 'false', 'pageNumber-fontItalic': 'false', 'pageNumber-color': '-16777216', 'pageNumber-seperator': '/', 'pageNumber-foreStr': '', 'pageNumber-pageStartNumStr': '' });
-      if (hasPage || fc.some((b) => b.content?.length)) meta.footer = { attrs, content: fc.length ? fc : [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
-    }
+    let fc = [];
+    if (fp && files[fp]) fc = takePn(fp, parseBlocks(xml(fp).documentElement, relsOf(fp)), 'bottom');
+    if (pn || fc.some((bl) => bl.content?.length)) meta.footer = { attrs: writePageNumber({ background: '-1', foreground: '-8355712' }, pn), content: fc.length ? fc : [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
   }
   for (const c of Object.values(cById)) comments.push(c);
   return { doc: { type: 'doc', content }, meta, review: { comments } };

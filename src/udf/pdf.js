@@ -3,6 +3,7 @@
 // a document printed or exported here looks exactly like it does in egPDF.
 // Keep the two copies in sync. Entry points: udfXmlToPdf(xmlString, loadFont)
 // and udfToPdf(udfBytes, loadFont).
+import { readPageNumber, pageLabel } from './pagenum.js';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
@@ -364,7 +365,8 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
   const headerStart = num(headerEl?.getAttribute('startPage'), 1);
   const headerH = header ? blocksHeight(header) : 0;
   const footerH = footer ? blocksHeight(footer) : 0;
-  const footerHasPageNo = !!footerEl?.getAttribute('pageNumber-spec');
+  const pn = readPageNumber(Object.fromEntries(Array.from(footerEl?.attributes || []).map((a) => [a.name, a.value])));
+  const footerHasPageNo = pn.on && pn.vert === 'bottom';
   const footerReserve = footerH + (footerHasPageNo ? 14 : 0);
 
   // ---- body: flow onto pages ------------------------------------------------------
@@ -401,18 +403,20 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
   }
 
   // headers / footers once the page count is known
-  const pnFont = await font('Arial', false, false);
+  const pnFont = await font(pn.font || 'Arial', !!pn.bold, !!pn.italic);
   pages.forEach((p, i) => {
     if (header && i + 1 >= headerStart) drawBlocksAt(p, header, M.left, pageH - M.headerOff);
     if (footer) {
       const fb = Math.max(M.bottom, 20);
       drawBlocksAt(p, footer, M.left, fb + footerReserve);
-      if (footerHasPageNo) {
-        const sep = footerEl.getAttribute('pageNumber-seperator') || '/';
-        const s = `${i + 1} ${sep} ${pages.length}`;
-        const size = num(footerEl.getAttribute('pageNumber-fontSize'), 10);
-        p.drawText(s, { x: pageW - M.right - pnFont.widthOfTextAtSize(s, size), y: fb, size, font: pnFont, color: rgb(0.3, 0.3, 0.3) });
-      }
+    }
+    if (pn.on) {
+      const s = pageLabel(pn, i, pages.length);
+      const size = pn.size || 10;
+      const w = pnFont.widthOfTextAtSize(s, size);
+      const x = pn.pos === 'left' ? M.left : pn.pos === 'center' ? (pageW - w) / 2 : pageW - M.right - w;
+      const y = pn.vert === 'top' ? pageH - M.headerOff - size : Math.max(M.bottom, 20);
+      p.drawText(s, { x, y, size, font: pnFont, color: rgb(0.3, 0.3, 0.3) });
     }
   });
 

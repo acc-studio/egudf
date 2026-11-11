@@ -17,6 +17,7 @@ import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
+import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from './udf/pagenum.js';
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
@@ -107,6 +108,11 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
   tab.ruler.setVisible(app.showRuler);
   applyGeometry(tab);
   new ResizeObserver(() => applyZoom(tab)).observe(tab.sheet);
+  // double-click in a page's top/bottom margin edits the header/footer (like Word)
+  host.addEventListener('dblclick', (e) => {
+    const part = marginPart(tab, e);
+    if (part) { e.preventDefault(); headerFooterDialog(tab, part); }
+  });
   app.tabs.push(tab);
   activate(tab);
   if (path) addRecent(path, title);
@@ -171,8 +177,8 @@ function drawOverlay(tab, L) {
   const g = tab.geom;
   const hdr = tab.meta.header, ftr = tab.meta.footer;
   const startPage = num(hdr?.attrs?.startPage, 1);
-  const pageNo = !!ftr?.attrs?.['pageNumber-spec'];
-  const sep = ftr?.attrs?.['pageNumber-seperator'] || '/';
+  const pn = readPageNumber(ftr?.attrs);
+  const pageNo = pn.on;
   const hHtml = hdr ? (tab._hHtml ??= staticHTML(hdr.content)) : '';
   const fHtml = ftr ? (tab._fHtml ??= staticHTML(ftr.content)) : '';
   const tops = [0], bottoms = [];
@@ -187,10 +193,15 @@ function drawOverlay(tab, L) {
   for (let i = 0; i < n; i++) {
     if (i < n - 1) html += `<div class="pg-band" style="top:${bottoms[i]}px;height:${GAP}px"></div>`;
     if (hdr && i + 1 >= startPage) html += `<div class="pg-header" style="top:${tops[i] + g.headerOff}px;left:${g.left}px;right:${g.right}px">${hHtml}</div>`;
-    if (ftr && fHtml) html += `<div class="pg-footer" style="top:${bottoms[i] - g.footerOff - (pageNo ? 16 : 0)}px;left:${g.left}px;right:${g.right}px">${fHtml}</div>`;
-    if (pageNo) html += `<div class="pg-num" style="top:${bottoms[i] - g.footerOff}px;right:${g.right}px">${i + 1} ${esc(sep)} ${n}</div>`;
+    if (ftr && fHtml) html += `<div class="pg-footer" style="top:${bottoms[i] - g.footerOff - (pageNo && pn.vert === 'bottom' ? 16 : 0)}px;left:${g.left}px;right:${g.right}px">${fHtml}</div>`;
+    if (pageNo) {
+      const y = pn.vert === 'top' ? tops[i] + g.headerOff * 0.6 : bottoms[i] - g.footerOff;
+      const font = `font-family:'${esc(pn.font)}',Arial,sans-serif;font-size:${pn.size * 0.9}pt;${pn.bold ? 'font-weight:700;' : ''}${pn.italic ? 'font-style:italic;' : ''}`;
+      html += `<div class="pg-num ${pn.vert}" style="top:${y}px;left:${g.left}px;right:${g.right}px;text-align:${pn.pos};${font}">${esc(pageLabel(pn, i, n))}</div>`;
+    }
   }
   tab.overlay.innerHTML = html;
+  tab.pageBoxes = { tops, bottoms };
   tab.pages = n;
   if (tab === app.active) scheduleUI();
 }
@@ -511,18 +522,50 @@ function markMetaDirty(tab) {
   tab.editor.commands.repaginate();
 }
 
-function headerFooterDialog(tab) {
+/** 'header' | 'footer' when (clientX, clientY) is in a page's top or bottom margin. */
+function marginPart(tab, e) {
+  if (!tab.pageBoxes || e.target.closest?.('p, td, th, img')) return null;
+  const r = tab.sheet.getBoundingClientRect();
+  const y = (e.clientY - r.top) / app.zoom, x = (e.clientX - r.left) / app.zoom;
+  if (x < 0 || x > tab.geom.pageW) return null;
+  const { tops, bottoms } = tab.pageBoxes;
+  for (let i = 0; i < tops.length; i++) {
+    if (y >= tops[i] && y < tops[i] + tab.geom.top) return 'header';
+    if (y <= bottoms[i] && y > bottoms[i] - tab.geom.bottom) return 'footer';
+  }
+  return null;
+}
+
+function headerFooterDialog(tab, focus = null) {
   const body = h(`<div>
     <div class="field"><label>Üst bilgi</label><div class="mini-editor" id="hf-h"></div></div>
     <div class="field"><label><input type="checkbox" id="hf-first"> İlk sayfada üst bilgi gösterme</label></div>
     <div class="field"><label>Alt bilgi</label><div class="mini-editor" id="hf-f"></div></div>
-    <div class="field"><label><input type="checkbox" id="hf-num"> Sayfa numarası (1 / N) ekle</label></div>
+    <div class="field"><label><input type="checkbox" id="hf-num"> Sayfa numarası</label></div>
+    <div class="hf-pn" id="hf-pn">
+      <div class="field"><label>Biçim</label><select id="hf-fmt">${PN_FORMATS.map((f) => `<option value="${f.id}">${f.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Konum</label><select id="hf-pos"><option value="right">Sağda</option><option value="center">Ortada</option><option value="left">Solda</option></select></div>
+      <div class="field"><label>Yer</label><select id="hf-vert"><option value="bottom">Sayfa altı</option><option value="top">Sayfa üstü</option></select></div>
+      <div class="field"><label>İlk numara</label><input type="number" id="hf-start" min="1" max="9999" value="1"></div>
+      <div class="field"><label>&nbsp;</label><label class="inline"><input type="checkbox" id="hf-bold"> Kalın</label></div>
+    </div>
     <p class="note">Ctrl+B / Ctrl+I / Ctrl+E (ortala) / Ctrl+R (sağa) kısayolları burada da çalışır.</p></div>`);
   const mk = (el, blocks) => createEditor({ element: el, content: { type: 'doc', content: blocks?.length ? blocks : [{ type: 'paragraph', attrs: defaultParaAttrs() }] }, paginate: false });
   const he = mk($('#hf-h', body), tab.meta.header?.content);
   const fe = mk($('#hf-f', body), tab.meta.footer?.content);
   $('#hf-first', body).checked = num(tab.meta.header?.attrs?.startPage, 1) > 1;
-  $('#hf-num', body).checked = !!tab.meta.footer?.attrs?.['pageNumber-spec'];
+  const pn0 = readPageNumber(tab.meta.footer?.attrs);
+  $('#hf-num', body).checked = pn0.on;
+  const pnDefaults = pn0.on ? pn0 : { pos: 'right', vert: 'bottom', total: true, prefix: '', start: 1, bold: false };
+  $('#hf-fmt', body).value = formatOf(pnDefaults) === 'custom' ? 'nN' : formatOf(pnDefaults);
+  $('#hf-pos', body).value = pnDefaults.pos;
+  $('#hf-vert', body).value = pnDefaults.vert;
+  $('#hf-start', body).value = pnDefaults.start || 1;
+  $('#hf-bold', body).checked = !!pnDefaults.bold;
+  const syncPn = () => $('#hf-pn', body).classList.toggle('off', !$('#hf-num', body).checked);
+  $('#hf-num', body).onchange = syncPn;
+  syncPn();
+  if (focus) setTimeout(() => (focus === 'footer' ? fe : he).commands.focus('end'), 60);
   const isEmpty = (ed) => !ed.getText().trim() && !ed.getJSON().content?.some((b) => b.type !== 'paragraph');
   modal({
     title: 'Üst ve alt bilgi', icon: 'header', body, width: 620,
@@ -532,9 +575,10 @@ function headerFooterDialog(tab) {
       tab.meta.header = hEmpty ? null : { attrs: { background: '-1', foreground: '-8355712', ...(tab.meta.header?.attrs || {}), startPage: $('#hf-first', body).checked ? '2' : '1' }, content: he.getJSON().content };
       if (fEmpty && !num_) tab.meta.footer = null;
       else {
-        const attrs = { background: '-1', foreground: '-8355712', ...(tab.meta.footer?.attrs || {}) };
-        if (num_) Object.assign(attrs, { 'pageNumber-spec': attrs['pageNumber-spec'] || 'BSP32_72', 'pageNumber-fontFace': 'Arial', 'pageNumber-fontSize': '11', 'pageNumber-fontBold': 'false', 'pageNumber-fontItalic': 'false', 'pageNumber-color': '-16777216', 'pageNumber-seperator': '/', 'pageNumber-foreStr': '', 'pageNumber-pageStartNumStr': '' });
-        else for (const k of Object.keys(attrs)) if (k.startsWith('pageNumber-')) delete attrs[k];
+        const base = { background: '-1', foreground: '-8355712', ...(tab.meta.footer?.attrs || {}) };
+        const f = PN_FORMATS.find((x) => x.id === $('#hf-fmt', body).value) || PN_FORMATS[1];
+        const keep = formatOf(pn0) === 'custom' && $('#hf-fmt', body).value === 'nN' ? { total: pn0.total, prefix: pn0.prefix } : {};
+        const attrs = writePageNumber(base, num_ ? { ...pn0, total: f.total, prefix: f.prefix, ...keep, pos: $('#hf-pos', body).value, vert: $('#hf-vert', body).value, start: parseInt($('#hf-start', body).value, 10) || 1, bold: $('#hf-bold', body).checked } : null);
         tab.meta.footer = { attrs, content: fEmpty ? [{ type: 'paragraph', attrs: defaultParaAttrs() }] : fe.getJSON().content };
       }
       markMetaDirty(tab);
@@ -542,15 +586,52 @@ function headerFooterDialog(tab) {
   });
 }
 
-function togglePageNumbers(tab) {
+/** o: page number options, or null to remove them. */
+function setPageNumbers(tab, o) {
   const f = tab.meta.footer;
-  if (f?.attrs?.['pageNumber-spec']) {
-    for (const k of Object.keys(f.attrs)) if (k.startsWith('pageNumber-')) delete f.attrs[k];
+  if (!o) {
+    if (!f) return;
+    f.attrs = writePageNumber(f.attrs, null);
     if (!f.content?.some((b) => b.content?.length)) tab.meta.footer = null;
   } else {
-    tab.meta.footer = { attrs: { background: '-1', foreground: '-8355712', ...(f?.attrs || {}), 'pageNumber-spec': 'BSP32_72', 'pageNumber-fontFace': 'Arial', 'pageNumber-fontSize': '11', 'pageNumber-fontBold': 'false', 'pageNumber-fontItalic': 'false', 'pageNumber-color': '-16777216', 'pageNumber-seperator': '/', 'pageNumber-foreStr': '', 'pageNumber-pageStartNumStr': '' }, content: f?.content || [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
+    const cur = readPageNumber(f?.attrs);
+    tab.meta.footer = { attrs: writePageNumber({ background: '-1', foreground: '-8355712', ...(f?.attrs || {}) }, { ...(cur.on ? cur : {}), ...o }), content: f?.content || [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
   }
   markMetaDirty(tab);
+}
+
+function pageNumberMenu(tab, el) {
+  const cur = readPageNumber(tab.meta.footer?.attrs);
+  const fmt = cur.on ? formatOf(cur) : null;
+  const items = [{ header: 'Biçim' }];
+  for (const f of PN_FORMATS) items.push({ label: f.label, checked: fmt === f.id, onClick: () => setPageNumbers(tab, { pos: cur.on ? cur.pos : 'right', vert: cur.on ? cur.vert : 'bottom', total: f.total, prefix: f.prefix }) });
+  items.push({ sep: true }, { header: 'Konum' });
+  for (const [vert, pos, label] of [['bottom', 'right', 'Alt, sağ'], ['bottom', 'center', 'Alt, orta'], ['bottom', 'left', 'Alt, sol'], ['top', 'right', 'Üst, sağ'], ['top', 'center', 'Üst, orta']]) {
+    items.push({ label, checked: cur.on && cur.vert === vert && cur.pos === pos, onClick: () => setPageNumbers(tab, { vert, pos, ...(cur.on ? {} : { total: true }) }) });
+  }
+  items.push({ sep: true }, { label: 'Biçimlendir…', icon: 'header', onClick: () => headerFooterDialog(tab) }, { label: 'Sayfa numaralarını kaldır', icon: 'reject', disabled: !cur.on, onClick: () => setPageNumbers(tab, null) });
+  menu(el, items);
+}
+
+function togglePageNumbers(tab) {
+  setPageNumbers(tab, readPageNumber(tab.meta.footer?.attrs).on ? null : { pos: 'right', vert: 'bottom', total: true });
+}
+
+/** Ctrl+G: scroll to a page. */
+async function gotoPage(tab) {
+  if (!tab?.pageBoxes) return;
+  const v = await promptBox({ title: 'Sayfaya git', label: `Sayfa numarası (1 – ${tab.pages})`, value: '', ok: 'Git', icon: 'page' });
+  const p = parseInt(v, 10);
+  if (!(p >= 1)) return;
+  scrollToPage(tab, Math.min(p, tab.pages));
+}
+function scrollToPage(tab, p) {
+  const top = tab.pageBoxes.tops[p - 1] || 0;
+  tab.host.scrollTop = tab.sheet.offsetTop * 1 + top * app.zoom - 12;
+  // cursor to the first text on that page
+  const r = tab.sheet.getBoundingClientRect();
+  const hit = tab.editor.view.posAtCoords({ left: r.left + tab.geom.left * app.zoom + 4, top: r.top + (top + tab.geom.top + 8) * app.zoom });
+  if (hit) tab.editor.chain().focus().setTextSelection(hit.pos).run();
 }
 
 async function profileDialog() {
@@ -975,7 +1056,9 @@ async function runCmd(name, arg, el) {
     }
     case 'pageSetup': pageSetup(tab); return;
     case 'headerFooter': headerFooterDialog(tab); return;
-    case 'pageNumbers': togglePageNumbers(tab); return;
+    case 'pageNumbers': if (tab) pageNumberMenu(tab, el); return;
+    case 'pageNumbersToggle': if (tab) togglePageNumbers(tab); return;
+    case 'gotoPage': gotoPage(tab); return;
 
     // ---- sign / uyap
     case 'sign':
@@ -1324,6 +1407,8 @@ function wireChrome() {
   $('#qat').onmousedown = (e) => e.preventDefault();
   $('#qat').onclick = (e) => { const b = e.target.closest('[data-qat]'); if (b && !b.disabled) runCmd(b.dataset.qat); };
   $('#sb-words').onclick = () => runCmd('wordCount');
+  $('#sb-page').onclick = () => runCmd('gotoPage');
+  $('#sb-page').title = 'Sayfaya git (Ctrl+G)';
   $('#sb-theme').innerHTML = icon('theme');
   $('#sb-theme').onclick = (e) => runCmd('themeMenu', null, e.currentTarget);
   $('#sb-help').innerHTML = icon('key');
@@ -1427,7 +1512,7 @@ function wireChrome() {
       if (e.shiftKey && k === 'l') { e.preventDefault(); runCmd('bullets'); return; }
     }
     if (e.shiftKey && k === 'e' && app.ed()) { e.preventDefault(); runCmd('trackToggle'); return; }
-    const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
+    const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close', g: 'gotoPage' };
     if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
     if (k === '=' || k === '+') { e.preventDefault(); setZoom(app.zoom + 0.1); }
     if (k === '-') { e.preventDefault(); setZoom(app.zoom - 0.1); }
@@ -1480,7 +1565,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1651,6 +1736,47 @@ window.__smoke = {
           afterBs, cursor, end, kinds: list.map((c) => c.kind), saved, final, undone,
         };
       }
+      case 'pagenum': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        ed.commands.setContent({ type: 'doc', content: Array.from({ length: 90 }, (_, i) => P(`${i + 1}. Paragraf: davacı vekili beyan eder.`)) });
+        await wait(400);
+        const r = {};
+        setPageNumbers(t, { pos: 'center', vert: 'bottom', total: true, prefix: 'Sayfa ' });
+        await wait(500);
+        const labels = () => [...t.overlay.querySelectorAll('.pg-num')].map((e) => e.textContent);
+        r.pages = t.pages;
+        r.labels = labels().slice(0, 2).join(' | ');
+        r.centered = t.overlay.querySelector('.pg-num')?.style.textAlign === 'center';
+        const xml = serializeUdfXml(ed.getJSON(), t.meta);
+        r.spec = /pageNumber-spec="([^"]+)"/.exec(xml)?.[1];
+        r.prefix = xml.includes('pageNumber-foreStr="Sayfa "');
+        const back = importDocx(exportDocx(ed.getJSON(), t.meta, t.review));
+        const pb = readPageNumber(back.meta.footer?.attrs);
+        r.docx = `${pb.vert}/${pb.pos}/${pb.total}/${pb.prefix}`;
+        setPageNumbers(t, { vert: 'top', pos: 'right', total: false, prefix: '' });
+        await wait(400);
+        r.top = !!t.overlay.querySelector('.pg-num.top') && labels()[1] === '2';
+        const back2 = importDocx(exportDocx(ed.getJSON(), t.meta, t.review));
+        r.docxTop = readPageNumber(back2.meta.footer?.attrs).vert;
+        r.pdf = (await makePdf(t)).length > 1000;
+        // legacy spec without the total flag reads "1"
+        r.legacy = pageLabel(readPageNumber({ 'pageNumber-spec': 'BSP32_72' }), 0, 5) === '1' && pageLabel(readPageNumber({ 'pageNumber-spec': 'BSP32_2120', 'pageNumber-seperator': '/' }), 1, 5) === '2 / 5';
+        // go to page 2
+        scrollToPage(t, 2);
+        await wait(150);
+        r.scrolled = t.host.scrollTop > 300;
+        setPageNumbers(t, { vert: 'bottom', pos: 'right', total: true, prefix: '' });
+        await wait(300);
+        t.host.scrollTop = t.pageBoxes.bottoms[0] * app.zoom - 500;
+        await wait(150);
+        r.ok = r.pages >= 2 && r.labels === `Sayfa 1 / ${r.pages} | Sayfa 2 / ${r.pages}` && r.centered && r.spec === 'BSP32_2088' && r.prefix && r.docx === 'bottom/center/true/Sayfa ' && r.top && r.docxTop === 'top' && r.pdf && r.legacy && r.scrolled;
+        t.dirty = false;
+        return r;
+      }
+      case 'hfdialog': { const t = app.tab(); headerFooterDialog(t, 'footer'); await wait(300); const ok = !!document.querySelector('#hf-pn') && $('#hf-fmt').value === 'nN'; return { ok }; }
       case 'fmttrack': {
         const t = newDocument('blank');
         await wait(200);
