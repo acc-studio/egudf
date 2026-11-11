@@ -4,6 +4,7 @@ import { pageOfPos, paginationKey } from './editor/pagination.js';
 import { parseUdfXml, serializeUdfXml, newDocMeta, docText, defaultParaAttrs } from './udf/codec.js';
 import { readUdf, writeUdf, strToU8 } from './udf/zip.js';
 import { udfXmlToPdf } from './udf/pdf.js';
+import { mergeTemplateData } from './udf/template-data.js';
 import { TEMPLATES, BLOCKS } from './udf/templates.js';
 import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes } from './udf/common.js';
 import { icon } from './icons.js';
@@ -202,7 +203,8 @@ async function openPath(path) {
 
 async function openBytes(bytes, { path, title }) {
   const u = readUdf(bytes);
-  const { doc, meta } = parseUdfXml(u.contentText);
+  // UYAP-generated forms (takip talebi…) may hold placeholders + a <data> payload: show them merged.
+  const { doc, meta } = parseUdfXml(mergeTemplateData(u.contentText).xml);
   let sig = null;
   if (u.sign) {
     const v = await native.sign.verify({ sign: u.sign, content: u.contentXml });
@@ -282,7 +284,7 @@ app.signTab = async (tab, req) => {
 async function loadFont(name) { return native.bundledFont(name); }
 
 async function makePdf(tab) {
-  const xml = new TextDecoder().decode(contentBytes(tab));
+  const xml = mergeTemplateData(new TextDecoder().decode(contentBytes(tab))).xml;
   return udfXmlToPdf(xml, loadFont, { title: tab.title });
 }
 
@@ -997,7 +999,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'table', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1087,7 +1089,18 @@ window.__smoke = {
         if (!sample) return { ok: true, skipped: true };
         const t = await openPath(sample.path);
         await wait(1500);
+        if (t) await native.writeFile(`${out}${sep}real.pdf`, await makePdf(t));
         return { ok: !!t, pages: t?.pages, signed: t?.sig?.state || 'none' };
+      }
+      case 'real-scroll': { // second screenshot of the real sample, one page further down
+        const t = app.active;
+        if (!t?.path) return { ok: true, skipped: true };
+        t.host.scrollTop = t.geom.pageH * app.zoom * 0.45;
+        await wait(300);
+        const sp = [...t.sheet.querySelectorAll('.page-spacer, .pg-row-break')].map((e) => ({ h: Math.round(e.dataset.pgH || e.getBoundingClientRect().height), in: e.tagName }));
+        // nested tables must fit their cell (overflow = clipped text)
+        const overflow = [...t.sheet.querySelectorAll('td table')].map((tb) => Math.round(tb.offsetWidth - tb.closest('.tableWrapper').parentElement.clientWidth)).filter((d) => d > 0);
+        return { ok: !overflow.length, pages: t.pages, sp, overflow, sheetH: t.sheet.offsetHeight };
       }
       default: return { ok: false, error: 'unknown step' };
     }

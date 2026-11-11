@@ -3,7 +3,9 @@
 // The document stays one contenteditable. After every change we measure the
 // line boxes in "unbroken" coordinates (current spacer heights subtracted),
 // decide where each page must end — at a line boundary inside a paragraph, or
-// before a table — and insert spacer widgets there. An overlay layer (not part
+// at a top-level table row — and insert spacers there: a widget before a block,
+// or extra top padding on every cell of the row that starts the new page (a
+// widget cannot live between <tr>s). An overlay layer (not part
 // of the editable DOM) then paints the page gaps, headers, footers and page
 // numbers at the spacer positions. Measuring never depends on its own output,
 // so the layout converges in one pass.
@@ -50,9 +52,18 @@ export const Pagination = Extension.create({
           const same = cur.breaks.length === result.breaks.length
             && cur.breaks.every((b, i) => b.pos === result.breaks[i].pos && Math.abs(b.fill - result.breaks[i].fill) < 0.5);
           if (!same) {
-            const decos = result.breaks.map((b, i) => Decoration.widget(b.pos, () => spacer(b.fill + L.bottom + L.gap + L.top, i), {
-              side: -1, ignoreSelection: true, key: `pg-${i}-${Math.round(b.fill * 2)}`,
-            }));
+            const decos = [];
+            result.breaks.forEach((b, i) => {
+              const h = b.fill + L.bottom + L.gap + L.top;
+              if (!b.cells) {
+                decos.push(Decoration.widget(b.pos, () => spacer(h, i), { side: -1, ignoreSelection: true, key: `pg-${i}-${Math.round(b.fill * 2)}` }));
+                return;
+              }
+              b.cells.forEach(([from, to], k) => decos.push(Decoration.node(from, to, {
+                style: `padding-top: calc(1.5pt + ${h}px)`,
+                ...(k ? {} : { class: 'pg-row-break', 'data-pg-h': String(h), 'data-page': String(i + 1) }),
+              })));
+            });
             const tr = view.state.tr.setMeta(paginationKey, { breaks: result.breaks, deco: DecorationSet.create(view.state.doc, decos) });
             tr.setMeta('addToHistory', false);
             view.dispatch(tr);
@@ -94,6 +105,16 @@ function spacer(h, i) {
   return el;
 }
 
+/** Page gaps in client coords, document order: spacer widgets and padded row-break cells. */
+function spacerBoxes(dom) {
+  return [...dom.querySelectorAll('.page-spacer, .pg-row-break')].map((el) => {
+    const r = el.getBoundingClientRect();
+    if (!el.classList.contains('pg-row-break')) return { top: r.top, h: r.height };
+    const scale = r.width / (el.offsetWidth || r.width) || 1;
+    return { top: r.top, h: (parseFloat(el.dataset.pgH) || 0) * scale };
+  });
+}
+
 function measure(view, L) {
   const dom = view.dom;
   const domRect = dom.getBoundingClientRect();
@@ -101,10 +122,7 @@ function measure(view, L) {
   const scale = domRect.width / dom.offsetWidth || 1;
   const H = L.pageH - L.top - L.bottom;
   if (H <= 20) return null;
-  const spacers = [...dom.querySelectorAll('.page-spacer')].map((el) => {
-    const r = el.getBoundingClientRect();
-    return { top: r.top, h: r.height };
-  });
+  const spacers = spacerBoxes(dom);
   const origin = domRect.top + L.top * scale;
   const toContent = (y) => {
     let sub = 0;
@@ -119,6 +137,21 @@ function measure(view, L) {
     if (!el || el.nodeType !== 1) return;
     const r = el.getBoundingClientRect();
     const pTop = toContent(r.top), pBottom = toContent(r.bottom);
+    if (node.type.name === 'table') {
+      // one unit per row: a long table continues on the next page instead of jumping there whole
+      node.forEach((row, rOff) => {
+        const rowPos = offset + 1 + rOff;
+        const tr = view.nodeDOM(rowPos);
+        if (!tr || tr.nodeType !== 1) return;
+        const rr = tr.getBoundingClientRect();
+        const cells = [];
+        row.forEach((cell, cOff) => cells.push([rowPos + 1 + cOff, rowPos + 1 + cOff + cell.nodeSize]));
+        // first row breaks before the whole table (widget), later rows pad their cells
+        units.push(rOff === 0 ? { pos: offset, top: pTop, bottom: toContent(rr.bottom) } : { pos: rowPos, top: toContent(rr.top), bottom: toContent(rr.bottom), cells });
+      });
+      if (units.length) units[units.length - 1].bottom = Math.max(units[units.length - 1].bottom, pBottom);
+      return;
+    }
     if (node.type.name !== 'paragraph') { units.push({ pos: offset, top: pTop, bottom: pBottom }); return; }
     const lines = lineRects(el);
     if (lines.length <= 1) { units.push({ pos: offset, top: pTop, bottom: pBottom }); return; }
@@ -152,7 +185,7 @@ function measure(view, L) {
     if (b > (page + 1) * H + 0.5 && t > page * H + 0.5) {
       const fill = (page + 1) * H - t;
       if (!breaks.length || breaks[breaks.length - 1].pos !== u.pos) {
-        breaks.push({ pos: u.pos, fill });
+        breaks.push(u.cells ? { pos: u.pos, fill, cells: u.cells } : { pos: u.pos, fill });
         shift += fill;
       }
     }
@@ -222,8 +255,8 @@ function collectSpacers(view, L, result) {
   const sheetRect = L.sheet.getBoundingClientRect();
   const scale = sheetRect.width / L.sheet.offsetWidth || 1;
   const breaks = paginationKey.getState(view.state).breaks;
-  const spacers = [...view.dom.querySelectorAll('.page-spacer')].map((el, i) => ({
-    y: (el.getBoundingClientRect().top - sheetRect.top) / scale,
+  const spacers = spacerBoxes(view.dom).map((s, i) => ({
+    y: (s.top - sheetRect.top) / scale,
     fill: breaks[i]?.fill || 0,
   }));
   return { pages: spacers.length + 1, spacers, lastFill: result.lastFill };
@@ -234,7 +267,7 @@ export function pageOfPos(view, pos) {
   try {
     const y = view.coordsAtPos(pos).top;
     let n = 1;
-    for (const el of view.dom.querySelectorAll('.page-spacer')) if (el.getBoundingClientRect().top < y) n++;
+    for (const s of spacerBoxes(view.dom)) if (s.top < y) n++;
     return n;
   } catch { return 1; }
 }

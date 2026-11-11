@@ -280,8 +280,12 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
     const cols = Math.max(1, parseInt(tEl.getAttribute('columnCount') || '0', 10)
       || Math.max(...[...tEl.querySelectorAll(':scope > row')].map((r) => r.querySelectorAll(':scope > cell').length), 1));
     const spans = String(tEl.getAttribute('columnSpans') || '').split(',').map((s) => num(s, NaN));
-    const total = spans.length === cols && spans.every(Number.isFinite) ? spans.reduce((a, b) => a + b, 0) : 0;
-    const colW = Array.from({ length: cols }, (_, i) => (total ? spans[i] / total : 1 / cols) * width);
+    const widthsFor = (spanList, n) => {
+      const ok = spanList.length === n && spanList.every((s) => Number.isFinite(s) && s > 0);
+      const total = ok ? spanList.reduce((a, b) => a + b, 0) : 0;
+      return Array.from({ length: n }, (_, i) => (total ? spanList[i] / total : 1 / n) * width);
+    };
+    const colW = widthsFor(spans, cols);
     const bordered = (tEl.getAttribute('border') || 'borderNone') !== 'borderNone';
     const rows = [];
     for (const rEl of tEl.querySelectorAll(':scope > row')) {
@@ -289,8 +293,11 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
       let x = 0;
       let h = num(rEl.getAttribute('height'));
       const cellEls = [...rEl.querySelectorAll(':scope > cell')];
+      // rows may carry their own grid (UYAP forms: table "100,5,100" ×3, rows "91,109" ×2)
+      const rowSpans = String(rEl.getAttribute('columnSpans') || '').split(',').map((s) => num(s, NaN));
+      const rowW = rowSpans.length === cellEls.length && rowSpans.every((s) => Number.isFinite(s) && s > 0) ? widthsFor(rowSpans, cellEls.length) : null;
       for (let c = 0; c < cellEls.length; c++) {
-        const w = colW[Math.min(c, cols - 1)];
+        const w = rowW ? rowW[c] : colW[Math.min(c, cols - 1)];
         const blocks = await layoutBlocks(cellEls[c], w - 4);
         const ch = blocksHeight(blocks) + 4;
         cells.push({ x, w, blocks });

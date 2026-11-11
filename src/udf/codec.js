@@ -226,10 +226,23 @@ function parseParagraph(el, ctx) {
   return node;
 }
 
+const CELL_CHROME_PT = 7.5;
+
 function spansToWidths(spans, cols, widthPt) {
   const s = String(spans || '').split(',').map((x) => num(x, NaN));
   const total = s.length === cols && s.every((x) => Number.isFinite(x) && x > 0) ? s.reduce((a, b) => a + b, 0) : 0;
-  return Array.from({ length: cols }, (_, i) => Math.max(24, Math.round(((total ? s[i] / total : 1 / cols) * widthPt) * PT_TO_PX)));
+  const want = Array.from({ length: cols }, (_, i) => (total ? s[i] / total : 1 / cols) * widthPt * PT_TO_PX);
+  // columns below the 24px minimum are widened at the expense of the others, so the
+  // table keeps its width (spans like "1,30" otherwise overflow the parent cell)
+  const MIN = 24;
+  const target = Math.max(widthPt * PT_TO_PX, MIN * cols);
+  const small = want.map((w) => w < MIN);
+  const rest = want.reduce((a, w, i) => a + (small[i] ? 0 : w), 0);
+  const avail = target - MIN * small.filter(Boolean).length;
+  const out = want.map((w, i) => (small[i] ? MIN : Math.max(MIN, rest ? (w / rest) * avail : MIN)));
+  // round without growing the total
+  let acc = 0, prev = 0;
+  return out.map((w) => { acc += w; const r = Math.floor(acc) - prev; prev += r; return r; });
 }
 
 function parseTable(tEl, ctx, widthPt) {
@@ -241,7 +254,8 @@ function parseTable(tEl, ctx, widthPt) {
     const ra = attrsOf(rEl);
     const rowWidths = ra.columnSpans ? spansToWidths(ra.columnSpans, elems(rEl).filter((c) => c.tagName === 'cell').length, widthPt) : widths;
     const cells = elems(rEl).filter((c) => c.tagName === 'cell').map((cEl, i) => {
-      const content = parseBlocks(cEl, ctx, null, (rowWidths[i] || widths[0]) / PT_TO_PX);
+      // nested tables get the cell's inner width (minus 3pt padding + 0.75pt border each side), or they overflow it
+      const content = parseBlocks(cEl, ctx, null, Math.max(24, (rowWidths[i] || widths[0]) / PT_TO_PX - CELL_CHROME_PT));
       return {
         type: 'tableCell',
         attrs: { colspan: 1, rowspan: 1, colwidth: [rowWidths[i] || rowWidths[rowWidths.length - 1]], udf: attrsOf(cEl) },
