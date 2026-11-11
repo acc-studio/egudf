@@ -49,7 +49,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     return id;
   };
 
-  function rPr(marks = []) {
+  function rPr(marks = [], change = null) {
     const o = [];
     let family = null, size = null, color = null, hl = null;
     for (const m of marks) {
@@ -80,11 +80,12 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     s += pick('<w:u ');
     if (hl && /^[0-9a-f]{6}$/i.test(hl)) s += `<w:shd w:val="clear" w:color="auto" w:fill="${hl}"/>`;
     s += pick('<w:vertAlign');
+    if (change) s += `<w:rPrChange ${revAttrs(change)}>${rPr(change.attrs?.before || []) || '<w:rPr/>'}</w:rPrChange>`;
     return s ? `<w:rPr>${s}</w:rPr>` : '';
   }
 
-  function textRuns(text, marks, del = false) {
-    const pr = rPr(marks);
+  function textRuns(text, marks, del = false, change = null) {
+    const pr = rPr(marks, change);
     const tag = del ? 'w:delText' : 'w:t';
     return text.split('\t').map((part, i) => `${i ? `<w:r>${pr}<w:tab/></w:r>` : ''}${part ? `<w:r>${pr}<${tag} xml:space="preserve">${x(part)}</${tag}></w:r>` : ''}`).join('');
   }
@@ -122,7 +123,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     return `<w:commentRangeEnd w:id="${n}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${n}"/></w:r>`;
   }
 
-  function pPr(a, { inCell } = {}) {
+  function pPr(a, { inCell, inner = false } = {}) {
     let s = '';
     if (a.list) {
       const key = `${a.list.kind}|${a.list.type}|${a.list.id}`;
@@ -138,6 +139,8 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     const jc = { center: 'center', right: 'right', justify: 'both' }[a.align];
     if (jc) s += `<w:jc w:val="${jc}"/>`;
     void inCell;
+    if (inner) return s;
+    if (a.fmtChange?.before) s += `<w:pPrChange ${revAttrs(a.fmtChange)}><w:pPr>${pPr({ ...defaultParaAttrs(), ...a.fmtChange.before }, { inner: true })}</w:pPr></w:pPrChange>`;
     return `<w:pPr>${s}</w:pPr>`;
   }
 
@@ -150,10 +153,11 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       if (c.type !== 'text') continue;
       const ins = c.marks?.find((m) => m.type === 'insertion');
       const del = c.marks?.find((m) => m.type === 'deletion');
-      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun'].includes(m.type));
+      const fc = c.marks?.find((m) => m.type === 'formatChange');
+      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun', 'formatChange'].includes(m.type));
       if (del) body += `<w:del ${revAttrs(del)}>${textRuns(c.text, marks, true)}</w:del>`;
       else if (ins) body += `<w:ins ${revAttrs(ins)}>${textRuns(c.text, marks)}</w:ins>`;
-      else body += textRuns(c.text, marks);
+      else body += textRuns(c.text, marks, false, fc);
     }
     return `<w:p>${pPr(a, opts)}${body}</w:p>`;
   }
@@ -519,6 +523,14 @@ export function importDocx(bytes) {
     }
     for (const k of ['leftIndent', 'rightIndent', 'firstLineIndent', 'spaceAbove', 'spaceBelow', 'lineSpacing']) if (pp[k] != null) attrs[k] = Math.round(pp[k] * 100) / 100;
     if (pp.tabs?.length) attrs.tabSet = pp.tabs.map((t) => `${t}:0:0`).join(',');
+    const pch = kid(ppr, 'pPrChange');
+    if (pch) {
+      const bp = readPPr([defP, ...chain(wa(kid(kid(pch, 'pPr'), 'pStyle'), 'val') || pStyle, 'pPr'), kid(pch, 'pPr')]);
+      const before = { ...attrs, list: bp.num ? attrs.list : null };
+      before.align = bp.align || 'left';
+      for (const k of ['leftIndent', 'rightIndent', 'firstLineIndent', 'spaceAbove', 'spaceBelow', 'lineSpacing']) before[k] = bp[k] != null ? Math.round(bp[k] * 100) / 100 : defaultParaAttrs()[k];
+      attrs.fmtChange = { author: wa(pch, 'author') || 'Word', at: wa(pch, 'date') || '', before };
+    }
     const paras = [[]];
     const fields = []; // fldChar stack: 'instr' until separate, then 'result'
     const inInstr = () => fields.includes('instr');
@@ -534,6 +546,8 @@ export function importDocx(bytes) {
       const rStyle = wa(kid(rpr, 'rStyle'), 'val');
       const rp = readRPr([...styleR, ...chain(rStyle, 'rPr'), rpr]);
       const marks = [...marksOf(rp), ...extraMarks];
+      const rch = kid(rpr, 'rPrChange');
+      if (rch) marks.push({ type: 'formatChange', attrs: { author: wa(rch, 'author') || 'Word', at: wa(rch, 'date') || '', before: marksOf(readRPr([...styleR, ...chain(rStyle, 'rPr'), kid(rch, 'rPr')])) } });
       for (const c of kids(r)) {
         switch (c.localName) {
           case 't': case 'delText': if (!inInstr()) pushText(rp.caps ? c.textContent.toLocaleUpperCase('tr') : c.textContent, marks); break;

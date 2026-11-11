@@ -315,40 +315,74 @@ export const ListLabels = Extension.create({
 
 export const searchKey = new PluginKey('udfSearch');
 
-function findMatches(doc, query, matchCase) {
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const WORD = '[\\p{L}\\p{N}_]';
+
+/**
+ * The search as a RegExp over block text, or { error } for an invalid pattern.
+ * Without regex, case-insensitive search lowercases both sides with Turkish
+ * rules (I/ı, İ/i), which keeps string lengths (and so positions) intact.
+ */
+export function searchRegex({ query, matchCase = false, wholeWord = false, regex = false }) {
+  if (!query) return null;
+  let src = regex ? query : escapeRe(matchCase ? query : query.toLocaleLowerCase('tr'));
+  if (wholeWord) src = `(?<!${WORD})(?:${src})(?!${WORD})`;
+  try { return new RegExp(src, `gu${regex && !matchCase ? 'i' : ''}`); } catch (e) { return { error: e.message }; }
+}
+
+export function findMatches(doc, opts) {
   const out = [];
-  if (!query) return out;
-  const q = matchCase ? query : query.toLocaleLowerCase('tr');
+  const re = searchRegex(opts);
+  if (!re || re.error) return out;
+  const lower = !opts.regex && !opts.matchCase;
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true;
-    // build the block text with a position map (atoms count as one char)
+    // block text with a position map (atoms count as one char; tracked deletions can't match)
     let text = '';
     const map = [];
     node.forEach((child, offset) => {
       if (child.isText) {
-        for (let i = 0; i < child.text.length; i++) { map.push(pos + 1 + offset + i); }
-        text += child.text;
-      } else { map.push(pos + 1 + offset); text += '￼'; }
+        for (let i = 0; i < child.text.length; i++) map.push(pos + 1 + offset + i);
+        text += child.marks.some((m) => m.type.name === 'deletion') ? '\u0000'.repeat(child.text.length) : child.text;
+      } else { map.push(pos + 1 + offset); text += '\ufffc'; }
     });
-    const hay = matchCase ? text : text.toLocaleLowerCase('tr');
-    let i = hay.indexOf(q);
-    while (i >= 0 && q.length) {
-      out.push({ from: map[i], to: map[i + q.length - 1] + 1 });
-      i = hay.indexOf(q, i + q.length);
+    map.push(pos + node.nodeSize - 1);
+    const hay = lower ? text.toLocaleLowerCase('tr') : text;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(hay))) {
+      if (!m[0].length) { re.lastIndex++; continue; }
+      out.push({ from: map[m.index], to: map[m.index + m[0].length - 1] + 1, text: text.slice(m.index, m.index + m[0].length) });
     }
     return false;
   });
   return out;
 }
 
+/** Replacement text for one match: regex mode expands $1, $& …; plain mode is literal. */
+export function replacementFor(opts, match, replacement) {
+  if (!opts.regex) return replacement;
+  const re = searchRegex({ ...opts, wholeWord: false });
+  if (!re || re.error) return replacement;
+  re.lastIndex = 0;
+  const one = new RegExp(re.source, re.flags.replace('g', ''));
+  return match.text.replace(one, replacement);
+}
+
 export const Search = Extension.create({
   name: 'udfSearch',
-  addStorage() { return { query: '', matchCase: false, current: 0, matches: [] }; },
+  addStorage() { return { query: '', matchCase: false, wholeWord: false, regex: false, error: null, current: 0, matches: [] }; },
   addCommands() {
     return {
-      setSearch: (query, matchCase = false) => ({ tr, dispatch, editor }) => {
+      setSearch: (query, opts = {}) => ({ tr, dispatch, editor }) => {
         const s = editor.storage.udfSearch;
-        s.query = query; s.matchCase = matchCase; s.current = 0;
+        if (typeof opts === 'boolean') opts = { matchCase: opts };
+        s.query = query; s.matchCase = !!opts.matchCase; s.wholeWord = !!opts.wholeWord; s.regex = !!opts.regex;
+        const re = searchRegex(s);
+        s.error = re?.error || null;
+        // start at the first match after the cursor, like Word
+        const head = tr.selection.from;
+        s.current = Math.max(0, findMatches(tr.doc, s).findIndex((m) => m.from >= head));
         if (dispatch) tr.setMeta(searchKey, { refresh: true });
         return true;
       },
@@ -364,14 +398,26 @@ export const Search = Extension.create({
         const s = editor.storage.udfSearch;
         const m = s.matches[s.current];
         if (!m) return false;
-        if (dispatch) { tr.insertText(text, m.from, m.to); tr.setMeta(searchKey, { refresh: true }); }
+        if (dispatch) {
+          const rep = replacementFor(s, m, text);
+          if (rep) tr.insertText(rep, m.from, m.to); else tr.delete(m.from, m.to);
+          // land on the next match
+          const end = tr.mapping.map(m.to);
+          const next = findMatches(tr.doc, s);
+          s.current = Math.max(0, next.findIndex((x) => x.from >= end));
+          if (next[s.current]) tr.setSelection(TextSelection.create(tr.doc, next[s.current].from, next[s.current].to)).scrollIntoView();
+          tr.setMeta(searchKey, { refresh: true, keepCurrent: true });
+        }
         return true;
       },
       replaceAll: (text) => ({ editor, tr, dispatch }) => {
         const s = editor.storage.udfSearch;
         if (!s.matches.length) return false;
         if (dispatch) {
-          for (const m of [...s.matches].reverse()) tr.insertText(text, m.from, m.to);
+          for (const m of [...s.matches].reverse()) {
+            const rep = replacementFor(s, m, text);
+            if (rep) tr.insertText(rep, m.from, m.to); else tr.delete(m.from, m.to);
+          }
           tr.setMeta(searchKey, { refresh: true });
         }
         return true;
@@ -386,7 +432,7 @@ export const Search = Extension.create({
         init: () => DecorationSet.empty,
         apply(tr, old, _o, newState) {
           if (!tr.docChanged && !tr.getMeta(searchKey)) return old;
-          storage.matches = findMatches(newState.doc, storage.query, storage.matchCase);
+          storage.matches = findMatches(newState.doc, storage);
           if (storage.current >= storage.matches.length) storage.current = 0;
           return DecorationSet.create(newState.doc, storage.matches.map((m, i) => Decoration.inline(m.from, m.to, { class: i === storage.current ? 'search-hit current' : 'search-hit' })));
         },

@@ -12,7 +12,7 @@ import {
 import { Pagination } from './pagination.js';
 import { AutoCorrect } from './autocorrect.js';
 import { CommentMark } from '../review/comments.js';
-import { InsertionMark, DeletionMark, TrackChanges } from '../review/changes.js';
+import { InsertionMark, DeletionMark, FormatChangeMark, TrackChanges } from '../review/changes.js';
 
 export function baseExtensions() {
   return [
@@ -50,6 +50,7 @@ export function baseExtensions() {
     CommentMark,
     InsertionMark,
     DeletionMark,
+    FormatChangeMark,
   ];
 }
 

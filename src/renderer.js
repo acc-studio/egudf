@@ -14,7 +14,7 @@ import { createRibbon, PARA_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
 import { commentsAt } from './review/comments.js';
 import { readReview, reviewEntries } from './review/store.js';
-import { changeList, changesAt, resolveChanges, resolveAll, setTracking } from './review/changes.js';
+import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
 import { exportDocx, importDocx } from './interop/docx.js';
@@ -846,8 +846,7 @@ async function runCmd(name, arg, el) {
       const accept = name === 'acceptChange';
       const here = changesAt(ed.state);
       if (here.length) {
-        const a = Math.min(...here.map((c) => c.from)), b = Math.max(...here.map((c) => c.to));
-        resolveChanges(ed, a, b, accept);
+        resolveItems(ed, here, accept);
         stepChange(1, true);
       } else if (!stepChange(1)) toast('Bekleyen değişiklik yok.');
       return;
@@ -1107,19 +1106,32 @@ function openFind(replace) {
   inp.select();
   doFind();
 }
-let matchCase = false;
+const findOpts = (() => { try { return { matchCase: false, wholeWord: false, regex: false, ...JSON.parse(localStorage.getItem('udf.find') || '{}') }; } catch { return { matchCase: false, wholeWord: false, regex: false }; } })();
 function doFind() {
   const ed = app.ed();
   if (!ed) return;
-  ed.commands.setSearch($('#find-input').value, matchCase);
-  const s = ed.storage.udfSearch;
-  $('#find-count').textContent = s.query ? (s.matches.length ? `${s.current + 1} / ${s.matches.length}` : 'Bulunamadı') : '';
+  ed.commands.setSearch($('#find-input').value, findOpts);
+  showFindCount();
+}
+function showFindCount() {
+  const s = app.ed()?.storage.udfSearch;
+  if (!s) return;
+  const el = $('#find-count');
+  el.textContent = s.error ? 'Geçersiz ifade' : s.query ? (s.matches.length ? `${s.current + 1} / ${s.matches.length}` : 'Bulunamadı') : '';
+  el.title = s.error || '';
+  el.classList.toggle('bad', !!s.error || (!!s.query && !s.matches.length));
+  for (const [id, k] of [['find-case', 'matchCase'], ['find-word', 'wholeWord'], ['find-regex', 'regex']]) $(`#${id}`).classList.toggle('active', !!findOpts[k]);
+}
+function toggleFindOpt(k) {
+  findOpts[k] = !findOpts[k];
+  try { localStorage.setItem('udf.find', JSON.stringify(findOpts)); } catch {}
+  doFind();
 }
 function findStep(dir) {
   const ed = app.ed();
   if (!ed) return;
   ed.commands.searchStep(dir);
-  doFind();
+  showFindCount();
 }
 function closeFind() {
   $('#findbar').classList.add('hidden');
@@ -1284,7 +1296,7 @@ function wireChrome() {
   app.showRuler = localStorage.getItem('udf.ruler') !== '0';
   setInterval(() => autosave(), 30000);
   app.changeItems = (t) => changeList(t.editor.state.doc);
-  app.resolveChange = (it, accept) => { resolveChanges(app.ed(), it.from, it.to, accept); renderReview(app); };
+  app.resolveChange = (it, accept) => { resolveItems(app.ed(), [it], accept); renderReview(app); };
   app.focusChange = (it) => app.ed()?.chain().focus().setTextSelection({ from: it.from, to: it.to }).scrollIntoView().run();
   app.contextExtras.push((ed) => (changesAt(ed.state).length ? [{ label: 'Değişikliği kabul et', icon: 'accept', onClick: () => runCmd('acceptChange') }, { label: 'Değişikliği reddet', icon: 'reject', onClick: () => runCmd('rejectChange') }] : []));
   if (localStorage.getItem('udf.markup') === 'none') document.body.classList.add('hide-markup');
@@ -1325,8 +1337,15 @@ function wireChrome() {
   $('#find-prev').onclick = () => findStep(-1);
   $('#find-next').onclick = () => findStep(1);
   $('#find-close').onclick = closeFind;
-  $('#find-case').onclick = () => { matchCase = !matchCase; $('#find-case').classList.toggle('active', matchCase); $('#find-case').style.color = matchCase ? 'var(--accent)' : ''; doFind(); };
-  $('#replace-one').onclick = () => { const ed = app.ed(); if (!ed) return; ed.commands.replaceCurrent($('#replace-input').value); doFind(); };
+  $('#find-case').onclick = () => toggleFindOpt('matchCase');
+  $('#find-word').onclick = () => toggleFindOpt('wholeWord');
+  $('#find-regex').onclick = () => toggleFindOpt('regex');
+  $('#findbar').addEventListener('keydown', (e) => {
+    if (!e.altKey) return;
+    const k = { c: 'matchCase', w: 'wholeWord', r: 'regex' }[e.key.toLowerCase()];
+    if (k) { e.preventDefault(); toggleFindOpt(k); }
+  });
+  $('#replace-one').onclick = () => { const ed = app.ed(); if (!ed) return; ed.commands.replaceCurrent($('#replace-input').value); showFindCount(); };
   $('#replace-all').onclick = () => {
     const ed = app.ed();
     if (!ed) return;
@@ -1419,7 +1438,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'autocorrect', 'docx', 'ruler', 'recovery', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1527,7 +1546,92 @@ window.__smoke = {
           afterBs, cursor, end, kinds: list.map((c) => c.kind), saved, final, undone,
         };
       }
+      case 'fmttrack': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.chain().focus().insertContent('Davacı vekili beyan eder.').run();
+        const align0 = ed.state.doc.firstChild.attrs.align;
+        runCmd('trackToggle');
+        ed.chain().setTextSelection({ from: 8, to: 14 }).toggleBold().run();
+        ed.chain().setTextSelection(3).setParagraphAttrs({ align: 'center' }).run();
+        const list = changeList(ed.state.doc);
+        const kinds = list.map((c) => c.kind).sort().join(',');
+        const desc = list.map((c) => c.desc).join(' | ');
+        const xml = serializeUdfXml(ed.getJSON(), t.meta);
+        const savedBold = /bold="true"[^>]*startOffset="7" length="6"/.test(xml) || /startOffset="7" length="6"[^>]*bold="true"/.test(xml) || xml.includes('bold="true"');
+        const savedCenter = xml.includes('Alignment="1"');
+        // Word round trip keeps both as tracked formatting changes
+        const back = importDocx(exportDocx(ed.getJSON(), t.meta, t.review));
+        const bj = JSON.stringify(back.doc);
+        const docxKeeps = bj.includes('"formatChange"') && bj.includes('"fmtChange"');
+        await wait(100);
+        const shot1 = true;
+        // reject both: bold and centring are gone
+        resolveAll(ed, false);
+        const rejected = !JSON.stringify(ed.getJSON()).includes('"bold"') && ed.state.doc.firstChild.attrs.align === align0 && !changeList(ed.state.doc).length;
+        // bold then un-bold: nothing left to review
+        ed.chain().setTextSelection({ from: 1, to: 7 }).toggleBold().run();
+        ed.chain().setTextSelection({ from: 1, to: 7 }).toggleBold().run();
+        const selfCleared = changeList(ed.state.doc).length === 0;
+        // italic, accept → stays italic, no change left
+        ed.chain().setTextSelection({ from: 1, to: 7 }).toggleItalic().run();
+        const one = changeList(ed.state.doc).length;
+        runCmd('acceptChange');
+        const accepted = JSON.stringify(ed.getJSON()).includes('"italic"') && changeList(ed.state.doc).length === 0;
+        // leave a visible example for the screenshot
+        ed.chain().setTextSelection({ from: 15, to: 20 }).toggleUnderline().setTextSelection(3).setParagraphAttrs({ align: 'right' }).run();
+        showPane(app, true);
+        renderReview(app);
+        await wait(250);
+        return { ok: kinds === 'format,paraFormat' && /Kalın/.test(desc) && /Ortaya/.test(desc) && savedBold && savedCenter && docxKeeps && rejected && selfCleared && one === 1 && accepted && shot1,
+          kinds, desc, savedBold, savedCenter, docxKeeps, rejected, selfCleared, one, accepted };
+      }
+      case 'find': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        if (ed.storage.trackChanges.enabled) runCmd('trackToggle');
+        ed.chain().focus().insertContent('Dava davacı Dava. dava 2024/15 E. 2023/7 K. istanbul İSTANBUL').run();
+        const count = (q, o = {}) => { ed.commands.setSearch(q, o); return ed.storage.udfSearch.error ? 'err' : ed.storage.udfSearch.matches.length; };
+        const r = {
+          plain: count('dava'),
+          word: count('dava', { wholeWord: true }),
+          caseWord: count('dava', { wholeWord: true, matchCase: true }),
+          turkish: count('İstanbul'),
+          regex: count('(\\d{4})/(\\d+)', { regex: true }),
+          bad: count('(', { regex: true }),
+        };
+        ed.commands.setSearch('(\\d{4})/(\\d+)', { regex: true });
+        ed.commands.replaceAll('$2/$1');
+        r.swapped = ed.state.doc.textContent.includes('15/2024 E. 7/2023 K.');
+        // literal "$1" stays literal outside regex mode
+        ed.commands.setSearch('E.', { matchCase: true });
+        ed.commands.replaceCurrent('$1');
+        r.literal = ed.state.doc.textContent.includes('15/2024 $1 7/2023');
+        // text deleted under track changes is not found
+        runCmd('trackToggle');
+        ed.commands.setSearch('davacı');
+        const m = ed.storage.udfSearch.matches[0];
+        ed.view.dispatch(ed.state.tr.delete(m.from, m.to));
+        r.deletedHidden = count('davacı') === 0;
+        runCmd('trackToggle');
+        ed.commands.setSearch('');
+        // the bar with its options, for the screenshot
+        ed.commands.setTextSelection(1);
+        openFind(true);
+        $('#find-input').value = 'dava';
+        findOpts.wholeWord = true;
+        doFind();
+        await wait(200);
+        r.barCount = $('#find-count').textContent;
+        findOpts.wholeWord = false;
+        r.ok = r.plain === 4 && r.word === 3 && r.caseWord === 1 && r.turkish === 2 && r.regex === 2 && r.bad === 'err' && r.swapped && r.literal && r.deletedHidden && /\/ 3$/.test(r.barCount);
+        return r;
+      }
       case 'comments': {
+        closeFind();
+        showPane(app, false);
         const t = newDocument('blank');
         await wait(200);
         const ed = t.editor;

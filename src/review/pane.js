@@ -133,10 +133,10 @@ export function renderReview(app) {
   }
   for (const it of changes) {
     const card = h(`<div class="rv-card change ${it.kind}" data-change="${it.from}">
-      <div class="rv-head"><span class="av" style="background:hsl(${hue(it.author)} 55% 48%)">${esc(initials(it.author))}</span><div class="who"><b>${esc(it.author)}</b><span>${it.kind === 'insertion' ? 'Ekledi' : it.kind === 'deletion' ? 'Sildi' : 'Biçimlendirdi'} · ${esc(when(it.at))}</span></div>
+      <div class="rv-head"><span class="av" style="background:hsl(${hue(it.author)} 55% 48%)">${esc(initials(it.author))}</span><div class="who"><b>${esc(it.author)}</b><span>${it.kind === 'insertion' ? 'Ekledi' : it.kind === 'deletion' ? 'Sildi' : it.kind === 'paraFormat' ? 'Paragraf biçimi' : 'Biçimlendirdi'} · ${esc(when(it.at))}</span></div>
         <button class="icon-btn" data-act="accept" title="Kabul et">${icon('accept')}</button>
         <button class="icon-btn" data-act="reject" title="Reddet">${icon('reject')}</button></div>
-      <div class="rv-text ${it.kind}">${esc(it.text.length > 140 ? `${it.text.slice(0, 140)}…` : it.text)}</div></div>`);
+      ${it.desc ? `<div class="rv-fmt">${esc(it.desc)}</div>` : ''}<div class="rv-text ${it.kind}">${esc(it.text.length > 140 ? `${it.text.slice(0, 140)}…` : it.text) || '<span class="dim">(boş paragraf)</span>'}</div></div>`);
     card._item = it;
     list.append(card);
   }

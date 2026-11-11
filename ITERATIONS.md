@@ -176,3 +176,31 @@ change is committed and pushed, and an installer
 - **Şablonlarım:** Ekle → "Şablon olarak kaydet" stores the current document
   as a template (text, layout, header/footer). It appears under Dosya → Yeni
   and on the start screen; hover to delete.
+
+## 0.8.0: Formatting changes tracked; better find & replace (iteration 7)
+
+- **Formatting is now tracked** while İzleme is on, like Word:
+  - Text formatting (bold, italic, underline, font, size, colour, highlight,
+    sub/superscript) gets a dotted underline in the author's colour. The
+    review pane says what changed ("Kalın", "Boyut: 14pt", "İtalik değil").
+  - Paragraph formatting (alignment, indents, spacing, line spacing, lists,
+    tabs) gets a bar in the left margin and a "Paragraf biçimi" card
+    ("Ortaya hizalı", "Numaralı liste").
+  - Reject puts the old formatting back; accept keeps the new one. Undoing
+    the formatting yourself (bold, then bold again) removes the change.
+  - Word export/import keeps them as Word formatting revisions
+    (w:rPrChange / w:pPrChange), so they survive a trip through Word.
+  - As before, the saved UDF holds the "accepted" result; UYAP never sees
+    the markup.
+- **Find & replace:**
+  - New options next to the search box: **Aa** match case, **ab** whole word,
+    **.\*** regular expression (Alt+C / Alt+W / Alt+R). They are remembered.
+  - Case-insensitive search follows Turkish rules (I↔ı, İ↔i).
+  - Regex replacements can reuse groups: find `(\d{4})/(\d+)` and replace
+    with `$2/$1` turns 2024/15 into 15/2024. In normal mode "$1" is literal.
+  - Search starts at the cursor; Değiştir moves to the next match; an invalid
+    regex says so instead of silently finding nothing.
+  - Text deleted under track changes is no longer found or replaced.
+- **Testing:** new smoke steps `fmttrack` and `find`, unit tests for search;
+  smoke screenshots now always show the current state (they could lag one
+  step behind).

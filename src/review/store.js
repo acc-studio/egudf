@@ -29,7 +29,7 @@ export function hasReview(tab, docJson) {
   let found = false;
   const walk = (n) => {
     if (found) return;
-    if (n.marks?.some((m) => m.type === 'insertion' || m.type === 'deletion' || m.type === 'formatChange')) { found = true; return; }
+    if (n.attrs?.fmtChange || n.marks?.some((m) => m.type === 'insertion' || m.type === 'deletion' || m.type === 'formatChange')) { found = true; return; }
     n.content?.forEach(walk);
   };
   walk(docJson);

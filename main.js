@@ -394,6 +394,9 @@ async function runSmoke() {
   const shot = async (name) => {
     win.webContents.invalidate(); // hidden windows only repaint on demand: force a fresh frame
     await wait(150);
+    await win.webContents.capturePage(); // the first capture can still return the previous frame
+    win.webContents.invalidate();
+    await wait(120);
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   };
   await wait(800);
