@@ -1,0 +1,1105 @@
+// UDF Editör — renderer: tabs, file pipeline, commands, dialogs, status.
+import { createEditor, staticHTML } from './editor/index.js';
+import { pageOfPos, paginationKey } from './editor/pagination.js';
+import { parseUdfXml, serializeUdfXml, newDocMeta, docText, defaultParaAttrs } from './udf/codec.js';
+import { readUdf, writeUdf, strToU8 } from './udf/zip.js';
+import { udfXmlToPdf } from './udf/pdf.js';
+import { TEMPLATES, BLOCKS } from './udf/templates.js';
+import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes } from './udf/common.js';
+import { icon } from './icons.js';
+import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate } from './ui.js';
+import { createRibbon, PARA_STYLES } from './ribbon.js';
+import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
+
+const native = window.native;
+const CM = 28.3465; // points per cm
+const GAP = 18; // px between pages
+
+const app = {
+  tabs: [],
+  active: null,
+  zoom: Math.min(2, Math.max(0.5, parseFloat(localStorage.getItem('udf.zoom')) || 1)),
+  lastColor: '#c00000',
+  lastHighlight: '#ffff00',
+  profile: {},
+  ed: () => app.active?.editor || null,
+  tab: () => app.active,
+  run: (name, arg, el) => runCmd(name, arg, el),
+};
+let seq = 0;
+let ribbon;
+
+// ================================================================== tabs
+
+function geometry(meta) {
+  const pf = meta.pageFormat || {};
+  const land = pf.paperOrientation && pf.paperOrientation !== '1';
+  const w = land ? A4.h : A4.w, hh = land ? A4.w : A4.h;
+  return {
+    pageW: w * PT_TO_PX,
+    pageH: hh * PT_TO_PX,
+    top: num(pf.topMargin, 56.7) * PT_TO_PX,
+    bottom: num(pf.bottomMargin, 56.7) * PT_TO_PX,
+    left: num(pf.leftMargin, 70.875) * PT_TO_PX,
+    right: num(pf.rightMargin, 70.875) * PT_TO_PX,
+    headerOff: num(pf.headerFOffset, 20) * PT_TO_PX,
+    footerOff: num(pf.footerFOffset, 20) * PT_TO_PX,
+    gap: GAP,
+  };
+}
+
+function applyGeometry(tab) {
+  const g = geometry(tab.meta);
+  tab.geom = g;
+  const s = tab.sheet.style;
+  s.width = `${g.pageW}px`;
+  s.fontFamily = `'${tab.meta.base.family}', 'Liberation Serif', 'Times New Roman', serif`;
+  s.fontSize = `${tab.meta.base.size}pt`;
+  const pm = tab.sheet.querySelector('.udf-doc');
+  if (pm) {
+    pm.style.paddingTop = `${g.top}px`;
+    pm.style.paddingLeft = `${g.left}px`;
+    pm.style.paddingRight = `${g.right}px`;
+    pm.style.minHeight = `${g.pageH}px`;
+  }
+  applyZoom(tab);
+}
+
+function applyZoom(tab) {
+  if (!tab?.sheet) return;
+  tab.sheet.style.transform = `scale(${app.zoom})`;
+  const box = tab.host.querySelector('.zoom-box');
+  box.style.width = `${tab.geom.pageW * app.zoom}px`;
+  box.style.height = `${tab.sheet.offsetHeight * app.zoom}px`;
+}
+
+function newTab({ title, path = null, doc, meta, original = null, sig = null }) {
+  const host = h(`<div class="doc-host"><div class="zoom-box"><div class="sheet"><div class="page-overlay"></div><div class="mount"></div></div></div></div>`);
+  $('#doc-area').append(host);
+  const tab = { id: ++seq, title, path, meta, host, sheet: $('.sheet', host), overlay: $('.page-overlay', host), dirty: false, original, sig, pages: 1 };
+  tab.geom = geometry(meta);
+  tab.editor = createEditor({
+    element: $('.mount', host),
+    content: doc,
+    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet }),
+    onLayout: (L) => drawOverlay(tab, L),
+    onUpdate: () => onDocChange(tab),
+    onSelection: () => { if (tab === app.active) scheduleUI(); },
+  });
+  applyGeometry(tab);
+  new ResizeObserver(() => applyZoom(tab)).observe(tab.sheet);
+  app.tabs.push(tab);
+  activate(tab);
+  if (path) addRecent(path, title);
+  return tab;
+}
+
+function activate(tab) {
+  app.active = tab;
+  for (const t of app.tabs) t.host.classList.toggle('active', t === tab);
+  $('#welcome').classList.toggle('hidden', !!tab);
+  document.body.classList.toggle('no-doc', !tab);
+  renderTabs();
+  if (tab) {
+    applyZoom(tab);
+    tab.editor.commands.repaginate();
+    setTimeout(() => tab.editor.commands.focus(), 0);
+    document.title = `${tab.title} — UDF Editör`;
+  } else {
+    document.title = 'UDF Editör';
+    renderWelcome();
+  }
+  refreshNav();
+  scheduleUI();
+}
+
+function renderTabs() {
+  const el = $('#tabs');
+  el.innerHTML = '';
+  for (const t of app.tabs) {
+    const sigCls = t.sig ? (t.sig.state === 'valid' ? '' : t.sig.state === 'stale' ? 'stale' : 'invalid') : null;
+    const b = h(`<div class="tab ${t === app.active ? 'active' : ''}" title="${esc(t.path || t.title)}">
+      ${sigCls !== null ? `<span title="${t.sig.state === 'valid' ? 'İmzalı' : 'İmza geçersiz'}">${icon('verify', `tab-sig ${sigCls}`)}</span>` : ''}
+      <span class="tab-title">${esc(t.title)}</span>${t.dirty ? '<span class="tab-dirty">●</span>' : ''}
+      <button class="tab-close" title="Kapat (Ctrl+W)">✕</button></div>`);
+    b.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } };
+    b.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t); else activate(t); };
+    el.append(b);
+  }
+}
+
+async function closeTab(tab) {
+  if (tab.dirty) {
+    const r = await confirmBox({ title: 'Kaydedilmemiş değişiklikler', text: `<b>${esc(tab.title)}</b> belgesindeki değişiklikler kaydedilsin mi?`, ok: 'Kaydet', cancel: 'İptal', extra: { label: 'Kaydetme', value: 'discard', kind: 'danger' } });
+    if (r === false || r === null) return false;
+    if (r === true && !(await save(tab))) return false;
+  }
+  tab.editor.destroy();
+  tab.host.remove();
+  const i = app.tabs.indexOf(tab);
+  app.tabs.splice(i, 1);
+  activate(app.tabs[Math.min(i, app.tabs.length - 1)] || null);
+  return true;
+}
+
+// ================================================================== page overlay
+
+function drawOverlay(tab, L) {
+  const g = tab.geom;
+  const hdr = tab.meta.header, ftr = tab.meta.footer;
+  const startPage = num(hdr?.attrs?.startPage, 1);
+  const pageNo = !!ftr?.attrs?.['pageNumber-spec'];
+  const sep = ftr?.attrs?.['pageNumber-seperator'] || '/';
+  const hHtml = hdr ? (tab._hHtml ??= staticHTML(hdr.content)) : '';
+  const fHtml = ftr ? (tab._fHtml ??= staticHTML(ftr.content)) : '';
+  const tops = [0], bottoms = [];
+  for (const s of L.spacers) {
+    const bottom = s.y + s.fill + g.bottom;
+    bottoms.push(bottom);
+    tops.push(bottom + GAP);
+  }
+  bottoms.push(tab.sheet.offsetHeight);
+  const n = tops.length;
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    if (i < n - 1) html += `<div class="pg-band" style="top:${bottoms[i]}px;height:${GAP}px"></div>`;
+    if (hdr && i + 1 >= startPage) html += `<div class="pg-header" style="top:${tops[i] + g.headerOff}px;left:${g.left}px;right:${g.right}px">${hHtml}</div>`;
+    if (ftr && fHtml) html += `<div class="pg-footer" style="top:${bottoms[i] - g.footerOff - (pageNo ? 16 : 0)}px;left:${g.left}px;right:${g.right}px">${fHtml}</div>`;
+    if (pageNo) html += `<div class="pg-num" style="top:${bottoms[i] - g.footerOff}px;right:${g.right}px">${i + 1} ${esc(sep)} ${n}</div>`;
+  }
+  tab.overlay.innerHTML = html;
+  tab.pages = n;
+  if (tab === app.active) scheduleUI();
+}
+
+// ================================================================== documents
+
+function onDocChange(tab) {
+  if (!tab.dirty) { tab.dirty = true; renderTabs(); }
+  if (tab.sig?.state === 'valid') {
+    tab.sig.state = 'stale';
+    renderTabs();
+    toast('Belge imzadan sonra değişti: kaydederken mevcut imza kaldırılacak. Göndermeden önce yeniden imzalayın.', { type: 'warn', ms: 6500 });
+  }
+  scheduleNav();
+  scheduleUI();
+}
+
+const baseName = (p) => p.split(/[\\/]/).pop().replace(/\.udf$/i, '');
+
+async function openPath(path) {
+  const existing = app.tabs.find((t) => t.path && t.path.toLowerCase() === path.toLowerCase());
+  if (existing) { activate(existing); return existing; }
+  try {
+    const bytes = await native.readFile(path);
+    return await openBytes(bytes, { path, title: baseName(path) });
+  } catch (e) {
+    toast(`Açılamadı: ${e.message || e}`, { type: 'bad' });
+    removeRecent(path);
+    return null;
+  }
+}
+
+async function openBytes(bytes, { path, title }) {
+  const u = readUdf(bytes);
+  const { doc, meta } = parseUdfXml(u.contentText);
+  let sig = null;
+  if (u.sign) {
+    const v = await native.sign.verify({ sign: u.sign, content: u.contentXml });
+    sig = { state: v.ok && v.valid ? 'valid' : 'invalid', info: v.ok ? v : { error: v.error } };
+  }
+  const tab = newTab({ title, path, doc, meta, original: { contentXml: u.contentXml, docProps: u.docProps, sign: u.sign, bytes }, sig });
+  if (sig?.state === 'valid') toast(`İmzalı belge · ${sig.info.signer?.subjectCN || ''} · ${fmtDate(sig.info.signingTime)}`, { type: 'ok' });
+  if (sig?.state === 'invalid') toast('Belgedeki imza doğrulanamadı.', { type: 'bad', actions: [{ label: 'Ayrıntı', onClick: () => signatureInfo(app, tab) }] });
+  return tab;
+}
+
+function newDocument(templateId = 'blank') {
+  const tpl = TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0];
+  const meta = newDocMeta();
+  const n = app.tabs.filter((t) => !t.path).length + 1;
+  const tab = newTab({ title: tpl.id === 'blank' ? `Belge ${n}` : `${tpl.name} ${n}`, doc: { type: 'doc', content: tpl.build(app.profile) }, meta });
+  return tab;
+}
+
+/** content.xml bytes for the tab: untouched original if unchanged, else freshly serialized. */
+function contentBytes(tab) {
+  if (!tab.dirty && tab.original?.contentXml) return tab.original.contentXml;
+  return strToU8(serializeUdfXml(tab.editor.getJSON(), tab.meta));
+}
+
+async function save(tab, { as = false } = {}) {
+  if (!tab) return false;
+  let path = tab.path;
+  if (!path || as) {
+    path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/[^\\/]*$/, '') : ''}${tab.title}.udf`, kind: 'udf' });
+    if (!path) return false;
+  }
+  let bytes;
+  if (!tab.dirty && tab.original?.bytes) {
+    bytes = tab.original.bytes; // unchanged: keep the file byte-for-byte (signature intact)
+  } else {
+    const xml = contentBytes(tab);
+    bytes = writeUdf({ contentXml: xml });
+    tab.original = { contentXml: xml, bytes };
+    if (tab.sig) tab.sig = null; // old signature no longer matches
+  }
+  await native.writeFile(path, bytes);
+  tab.path = path;
+  tab.title = baseName(path);
+  tab.dirty = false;
+  addRecent(path, tab.title);
+  renderTabs();
+  scheduleUI();
+  toast(`Kaydedildi: ${tab.title}.udf`, { type: 'ok', ms: 2200 });
+  return true;
+}
+
+/** Called by the sign dialog. Signs content.xml on the card and writes the signed .udf. */
+app.signTab = async (tab, req) => {
+  let path = tab.path;
+  if (!path) {
+    path = await native.saveDialog({ defaultPath: `${tab.title}.udf`, kind: 'udf' });
+    if (!path) return { error: 'Kaydetme iptal edildi.' };
+  }
+  const xml = contentBytes(tab);
+  const r = await native.sign.sign({ ...req, content: xml });
+  if (!r.ok) return { error: r.error };
+  const bytes = writeUdf({ contentXml: xml, sign: r.sgn });
+  await native.writeFile(path, bytes);
+  tab.path = path;
+  tab.title = baseName(path);
+  tab.dirty = false;
+  tab.original = { contentXml: xml, sign: r.sgn, bytes };
+  tab.sig = { state: 'valid', info: r.verification };
+  addRecent(path, tab.title);
+  renderTabs();
+  scheduleUI();
+  toast(`İmzalandı ve kaydedildi · ${r.signer.subjectCN}`, { type: 'ok', actions: [{ label: 'UYAP\'a gönder', onClick: () => uyapSendFlow(app, tab) }] });
+  return { ok: true };
+};
+
+async function loadFont(name) { return native.bundledFont(name); }
+
+async function makePdf(tab) {
+  const xml = new TextDecoder().decode(contentBytes(tab));
+  return udfXmlToPdf(xml, loadFont, { title: tab.title });
+}
+
+// ================================================================== recent
+
+function recents() { try { return JSON.parse(localStorage.getItem('udf.recent') || '[]'); } catch { return []; } }
+function addRecent(path, title) {
+  const list = recents().filter((r) => r.path.toLowerCase() !== path.toLowerCase());
+  list.unshift({ path, title, at: Date.now() });
+  localStorage.setItem('udf.recent', JSON.stringify(list.slice(0, 15)));
+}
+function removeRecent(path) { localStorage.setItem('udf.recent', JSON.stringify(recents().filter((r) => r.path !== path))); }
+
+// ================================================================== welcome / backstage
+
+function tplCard(t) {
+  const lines = t.id === 'blank' ? '' : '<i class="c"></i><i></i><i class="s"></i><i></i><i></i><i class="s"></i><i></i><i></i><i></i><i class="s"></i>';
+  return `<div class="tpl" data-tpl="${t.id}"><div class="thumb"><div class="page">${lines}</div></div><div class="meta"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></div></div>`;
+}
+
+function recentHtml() {
+  const list = recents();
+  if (!list.length) return '<div class="nav-empty">Henüz açılmış belge yok.</div>';
+  return `<div class="recent">${list.map((r) => `<div class="recent-item" data-path="${esc(r.path)}">${icon('page')}<div style="min-width:0"><div>${esc(r.title)}</div><div class="p">${esc(r.path)}</div></div><span class="when">${fmtDate(new Date(r.at).toISOString())}</span></div>`).join('')}</div>`;
+}
+
+function wireStart(root, after) {
+  root.querySelectorAll('[data-tpl]').forEach((el) => { el.onclick = () => { after?.(); newDocument(el.dataset.tpl); }; });
+  root.querySelectorAll('[data-path]').forEach((el) => { el.onclick = () => { after?.(); openPath(el.dataset.path); }; });
+  root.querySelector('[data-act=open]')?.addEventListener('click', () => { after?.(); runCmd('open'); });
+}
+
+function renderWelcome() {
+  const w = $('#welcome');
+  w.innerHTML = `<div class="bs-main">
+    <div class="welcome-hero"><div class="logo">${icon('sign')}</div><div><h1>UDF Editör</h1><div class="bs-sub" style="margin:0">UYAP belgelerini açın, düzenleyin, e-imzalayın ve gönderin — UYAP Editörü olmadan.</div></div></div>
+    <h2>Yeni</h2><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>
+    <h2 style="display:flex;align-items:center;gap:12px">Son kullanılanlar <button class="btn" data-act="open">${icon('open')}Aç…</button></h2>
+    ${recentHtml()}
+    <div class="drop-hint">.udf dosyalarını buraya sürükleyip bırakın</div>
+  </div>`;
+  wireStart(w);
+}
+
+function backstage(section = 'new') {
+  const bs = $('#backstage');
+  const close = () => bs.classList.add('hidden');
+  const t = app.active;
+  const items = [
+    ['new', 'new', 'Yeni'], ['open', 'open', 'Aç'], ['save', 'save', 'Kaydet'], ['saveAs', 'saveAs', 'Farklı kaydet'],
+    ['exportPdf', 'pdf', 'PDF olarak kaydet'], ['print', 'print', 'Yazdır (egPDF)'], ['sign', 'sign', 'İmzala'], ['uyapSend', 'upload', 'UYAP\'a gönder'],
+    ['info', 'info', 'Bilgi'], ['profile', 'user', 'Avukat bilgilerim'],
+  ];
+  bs.innerHTML = `<div class="bs-side"><button class="back">← Geri</button>${items.map(([k, ic, l]) => `<button data-bs="${k}" class="${k === section ? 'active' : ''}">${icon(ic)}${l}</button>`).join('')}</div><div class="bs-main"></div>`;
+  const main = $('.bs-main', bs);
+  const showSection = (k) => {
+    $$('[data-bs]', bs).forEach((b) => b.classList.toggle('active', b.dataset.bs === k));
+    if (k === 'new') {
+      main.innerHTML = `<h1>Yeni belge</h1><div class="bs-sub">Bir şablonla başlayın. Köşeli parantezli alanlar doldurulacak yerlerdir (Gezinti → Doldurulacak).</div><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>`;
+    } else if (k === 'open') {
+      main.innerHTML = `<h1>Aç</h1><div class="bs-sub"><button class="btn primary" data-act="open">${icon('open')}Gözat…</button></div><h2>Son kullanılanlar</h2>${recentHtml()}`;
+    } else if (k === 'info') {
+      main.innerHTML = t ? `<h1>${esc(t.title)}</h1><div class="kv" style="max-width:640px;margin-top:18px">
+        <div>Konum</div><div>${esc(t.path || 'Kaydedilmedi')}</div>
+        <div>Sayfa</div><div>${t.pages}</div>
+        <div>Kelime</div><div>${wordCount(t).toLocaleString('tr-TR')}</div>
+        <div>Biçim</div><div>UYAP Doküman (format_id ${esc(t.meta.formatId)})</div>
+        <div>İmza</div><div>${t.sig ? (t.sig.state === 'valid' ? `İmzalı — ${esc(t.sig.info?.signer?.subjectCN || '')}` : 'İmza geçersiz / eski') : 'İmzasız'}</div>
+        <div>UYAP doğrulama</div><div>${t.original?.docProps ? 'Belgede UYAP doğrulama bilgisi var' : '—'}</div>
+      </div>` : '<h1>Bilgi</h1><div class="bs-sub">Açık belge yok.</div>';
+    } else {
+      close();
+      runCmd(k);
+      return;
+    }
+    wireStart(main, close);
+  };
+  bs.onclick = (e) => {
+    if (e.target.closest('.back')) { close(); return; }
+    const b = e.target.closest('[data-bs]');
+    if (b) showSection(b.dataset.bs);
+  };
+  showSection(section);
+  bs.classList.remove('hidden');
+}
+
+// ================================================================== dialogs
+
+async function pageSetup(tab) {
+  const pf = tab.meta.pageFormat;
+  const cm = (v) => (num(v) / CM).toFixed(2);
+  const body = h(`<div>
+    <div class="field-row">
+      <div class="field"><label>Üst (cm)</label><input type="number" step="0.1" min="0" id="ps-t" value="${cm(pf.topMargin)}"></div>
+      <div class="field"><label>Alt (cm)</label><input type="number" step="0.1" min="0" id="ps-b" value="${cm(pf.bottomMargin)}"></div>
+      <div class="field"><label>Sol (cm)</label><input type="number" step="0.1" min="0" id="ps-l" value="${cm(pf.leftMargin)}"></div>
+      <div class="field"><label>Sağ (cm)</label><input type="number" step="0.1" min="0" id="ps-r" value="${cm(pf.rightMargin)}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Yönlendirme</label><select id="ps-o"><option value="1">Dikey</option><option value="0">Yatay</option></select></div>
+      <div class="field"><label>Üst bilgi uzaklığı (cm)</label><input type="number" step="0.1" min="0" id="ps-h" value="${cm(pf.headerFOffset)}"></div>
+      <div class="field"><label>Alt bilgi uzaklığı (cm)</label><input type="number" step="0.1" min="0" id="ps-f" value="${cm(pf.footerFOffset)}"></div>
+    </div>
+    <p class="note">Kağıt boyutu: A4 (UYAP).</p></div>`);
+  $('#ps-o', body).value = pf.paperOrientation === '1' || !pf.paperOrientation ? '1' : '0';
+  modal({
+    title: 'Sayfa yapısı', icon: 'page', body, width: 560,
+    actions: [{ label: 'İptal' }, { label: 'Uygula', kind: 'primary', onClick: () => {
+      const v = (id) => String(Math.max(0, parseFloat($(id, body).value) || 0) * CM);
+      setPageFormat(tab, { topMargin: v('#ps-t'), bottomMargin: v('#ps-b'), leftMargin: v('#ps-l'), rightMargin: v('#ps-r'), headerFOffset: v('#ps-h'), footerFOffset: v('#ps-f'), paperOrientation: $('#ps-o', body).value });
+    } }],
+  });
+}
+
+function setPageFormat(tab, patch) {
+  tab.meta.pageFormat = { ...tab.meta.pageFormat, ...patch };
+  applyGeometry(tab);
+  tab.editor.commands.repaginate();
+  markMetaDirty(tab);
+}
+
+function markMetaDirty(tab) {
+  tab._hHtml = undefined;
+  tab._fHtml = undefined;
+  onDocChange(tab);
+  tab.editor.commands.repaginate();
+}
+
+function headerFooterDialog(tab) {
+  const body = h(`<div>
+    <div class="field"><label>Üst bilgi</label><div class="mini-editor" id="hf-h"></div></div>
+    <div class="field"><label><input type="checkbox" id="hf-first"> İlk sayfada üst bilgi gösterme</label></div>
+    <div class="field"><label>Alt bilgi</label><div class="mini-editor" id="hf-f"></div></div>
+    <div class="field"><label><input type="checkbox" id="hf-num"> Sayfa numarası (1 / N) ekle</label></div>
+    <p class="note">Ctrl+B / Ctrl+I / Ctrl+E (ortala) / Ctrl+R (sağa) kısayolları burada da çalışır.</p></div>`);
+  const mk = (el, blocks) => createEditor({ element: el, content: { type: 'doc', content: blocks?.length ? blocks : [{ type: 'paragraph', attrs: defaultParaAttrs() }] }, paginate: false });
+  const he = mk($('#hf-h', body), tab.meta.header?.content);
+  const fe = mk($('#hf-f', body), tab.meta.footer?.content);
+  $('#hf-first', body).checked = num(tab.meta.header?.attrs?.startPage, 1) > 1;
+  $('#hf-num', body).checked = !!tab.meta.footer?.attrs?.['pageNumber-spec'];
+  const isEmpty = (ed) => !ed.getText().trim() && !ed.getJSON().content?.some((b) => b.type !== 'paragraph');
+  modal({
+    title: 'Üst ve alt bilgi', icon: 'header', body, width: 620,
+    onClose: () => { he.destroy(); fe.destroy(); },
+    actions: [{ label: 'İptal' }, { label: 'Uygula', kind: 'primary', onClick: () => {
+      const hEmpty = isEmpty(he), fEmpty = isEmpty(fe), num_ = $('#hf-num', body).checked;
+      tab.meta.header = hEmpty ? null : { attrs: { background: '-1', foreground: '-8355712', ...(tab.meta.header?.attrs || {}), startPage: $('#hf-first', body).checked ? '2' : '1' }, content: he.getJSON().content };
+      if (fEmpty && !num_) tab.meta.footer = null;
+      else {
+        const attrs = { background: '-1', foreground: '-8355712', ...(tab.meta.footer?.attrs || {}) };
+        if (num_) Object.assign(attrs, { 'pageNumber-spec': attrs['pageNumber-spec'] || 'BSP32_72', 'pageNumber-fontFace': 'Arial', 'pageNumber-fontSize': '11', 'pageNumber-fontBold': 'false', 'pageNumber-fontItalic': 'false', 'pageNumber-color': '-16777216', 'pageNumber-seperator': '/', 'pageNumber-foreStr': '', 'pageNumber-pageStartNumStr': '' });
+        else for (const k of Object.keys(attrs)) if (k.startsWith('pageNumber-')) delete attrs[k];
+        tab.meta.footer = { attrs, content: fEmpty ? [{ type: 'paragraph', attrs: defaultParaAttrs() }] : fe.getJSON().content };
+      }
+      markMetaDirty(tab);
+    } }],
+  });
+}
+
+function togglePageNumbers(tab) {
+  const f = tab.meta.footer;
+  if (f?.attrs?.['pageNumber-spec']) {
+    for (const k of Object.keys(f.attrs)) if (k.startsWith('pageNumber-')) delete f.attrs[k];
+    if (!f.content?.some((b) => b.content?.length)) tab.meta.footer = null;
+  } else {
+    tab.meta.footer = { attrs: { background: '-1', foreground: '-8355712', ...(f?.attrs || {}), 'pageNumber-spec': 'BSP32_72', 'pageNumber-fontFace': 'Arial', 'pageNumber-fontSize': '11', 'pageNumber-fontBold': 'false', 'pageNumber-fontItalic': 'false', 'pageNumber-color': '-16777216', 'pageNumber-seperator': '/', 'pageNumber-foreStr': '', 'pageNumber-pageStartNumStr': '' }, content: f?.content || [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
+  }
+  markMetaDirty(tab);
+}
+
+async function profileDialog() {
+  const s = await native.settings.get();
+  const p = s.profile || {};
+  const body = h(`<div>
+    <p class="note" style="margin-top:0">Şablonlar ve hazır bloklar bu bilgileri kullanır. Yalnızca bu bilgisayarda saklanır.</p>
+    <div class="field"><label>Ad Soyad</label><input type="text" id="pf-name" value="${esc(p.name || '')}" placeholder="Ör. Ayşe Yılmaz"></div>
+    <div class="field"><label>Baro ve sicil no</label><input type="text" id="pf-bar" value="${esc(p.bar || '')}" placeholder="Ör. İstanbul Barosu, Sicil No: 12345"></div>
+    <div class="field"><label>Büro adresi</label><textarea id="pf-addr">${esc(p.address || '')}</textarea></div></div>`);
+  modal({
+    title: 'Avukat bilgilerim', icon: 'user', body, width: 520,
+    actions: [{ label: 'İptal' }, { label: 'Kaydet', kind: 'primary', onClick: async () => {
+      app.profile = { name: $('#pf-name', body).value.trim(), bar: $('#pf-bar', body).value.trim(), address: $('#pf-addr', body).value.trim() };
+      await native.settings.set({ profile: app.profile });
+      toast('Kaydedildi', { type: 'ok', ms: 1800 });
+    } }],
+  });
+}
+
+async function uyapSettings() {
+  const s = await native.settings.get();
+  const body = h(`<div><div class="field"><label>Avukat Portal adresi</label><select id="us-url">
+    <option value="https://avukatbeta.uyap.gov.tr/">avukatbeta.uyap.gov.tr (yeni portal)</option>
+    <option value="https://avukat.uyap.gov.tr/">avukat.uyap.gov.tr</option></select></div>
+    <p class="note">Portal oturumu (çerezler) bu uygulamaya özel ayrı bir profilde saklanır. Portaldan indirdiğiniz .udf dosyaları İndirilenler\\UYAP klasörüne kaydedilip burada açılır.</p></div>`);
+  $('#us-url', body).value = s.uyapUrl || 'https://avukatbeta.uyap.gov.tr/';
+  modal({ title: 'UYAP portal adresi', icon: 'globe', body, width: 500, actions: [{ label: 'İptal' }, { label: 'Kaydet', kind: 'primary', onClick: () => native.settings.set({ uyapUrl: $('#us-url', body).value }) }] });
+}
+
+async function insertImage(ed) {
+  const f = await native.imageDialog();
+  if (!f) return;
+  const b64 = base64FromBytes(f.bytes);
+  const mime = /\.png$/i.test(f.name) ? 'image/png' : /\.gif$/i.test(f.name) ? 'image/gif' : 'image/jpeg';
+  const src = `data:${mime};base64,${b64}`;
+  const img = new Image();
+  img.src = src;
+  await img.decode().catch(() => {});
+  const maxW = (app.active.geom.pageW - app.active.geom.left - app.active.geom.right) * 0.75; // pt
+  let w = (img.naturalWidth || 200) * 0.75, hh = (img.naturalHeight || 100) * 0.75;
+  if (w > maxW) { hh *= maxW / w; w = maxW; }
+  ed.chain().focus().insertContent({ type: 'image', attrs: { src, width: Math.round(w), height: Math.round(hh) } }).run();
+}
+
+// ================================================================== styles
+
+function applyParaStyle(ed, id) {
+  const st = PARA_STYLES.find((s) => s.id === id);
+  if (!st) return;
+  const { state } = ed;
+  const tr = state.tr;
+  const { from, to } = state.selection;
+  const schema = state.schema;
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name !== 'paragraph') return true;
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...st.para });
+    const a = pos + 1, b = pos + node.nodeSize - 1;
+    if (st.marks.bold === true) tr.addMark(a, b, schema.marks.bold.create());
+    if (st.marks.bold === false) tr.removeMark(a, b, schema.marks.bold);
+    if (st.marks.italic === true) tr.addMark(a, b, schema.marks.italic.create());
+    if (st.marks.italic === false) tr.removeMark(a, b, schema.marks.italic);
+    if (st.marks.upper) {
+      node.descendants((child, off) => {
+        if (child.isText) {
+          const up = child.text.toLocaleUpperCase('tr');
+          if (up !== child.text) tr.insertText(up, tr.mapping.map(pos + 1 + off), tr.mapping.map(pos + 1 + off + child.text.length));
+        }
+      });
+    }
+    return false;
+  });
+  ed.view.dispatch(tr);
+  ed.commands.focus();
+}
+
+// ================================================================== commands
+
+const DATE_FORMATS = () => {
+  const d = new Date();
+  return [
+    d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' }),
+    d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' }),
+    `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`,
+  ];
+};
+const SYMBOLS = ['§', '₺', '€', '$', '“', '”', '‘', '’', '«', '»', '–', '—', '…', '•', '°', '±', '×', '÷', '½', '¼', '¾', '©', '®', '™', '→', '←', '✓', '№'];
+
+async function runCmd(name, arg, el) {
+  const tab = app.active;
+  const ed = tab?.editor;
+  const chain = () => ed.chain().focus();
+  switch (name) {
+    // ---- file
+    case 'backstage': backstage(); return;
+    case 'new': backstage('new'); return;
+    case 'newFromTemplate': backstage('new'); return;
+    case 'newBlank': newDocument('blank'); return;
+    case 'open': {
+      const paths = await native.openDialog();
+      for (const p of paths) await openPath(p);
+      return;
+    }
+    case 'save': if (tab) await save(tab); return;
+    case 'saveAs': if (tab) await save(tab, { as: true }); return;
+    case 'close': if (tab) await closeTab(tab); return;
+    case 'exportPdf': {
+      if (!tab) return;
+      const path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/\.udf$/i, '') : tab.title}.pdf`, kind: 'pdf' });
+      if (!path) return;
+      const bytes = await makePdf(tab);
+      await native.writeFile(path, bytes);
+      toast(`PDF kaydedildi: ${path.split(/[\\/]/).pop()}`, { type: 'ok', actions: [{ label: 'Klasörde göster', onClick: () => native.showInFolder(path) }] });
+      return;
+    }
+    case 'print': case 'openEgpdf': {
+      if (!tab) return;
+      const t = toast('PDF hazırlanıyor…', { ms: 2000 });
+      const r = await native.egpdf.open(await makePdf(tab), tab.title);
+      t.remove();
+      toast(r.egpdf ? 'egPDF\'te açıldı — yazdırmak için Ctrl+P' : 'Varsayılan PDF görüntüleyicide açıldı', { type: 'ok' });
+      return;
+    }
+    case 'profile': profileDialog(); return;
+    case 'showInFolder': if (tab?.path) native.showInFolder(tab.path); else toast('Belge henüz kaydedilmedi.', { type: 'warn' }); return;
+
+    // ---- clipboard / history
+    case 'cut': ed?.commands.focus(); document.execCommand('cut'); return;
+    case 'copy': ed?.commands.focus(); document.execCommand('copy'); return;
+    case 'paste': ed?.commands.focus(); if (!document.execCommand('paste')) toast('Yapıştırmak için Ctrl+V kullanın.'); return;
+    case 'undo': chain().undo().run(); return;
+    case 'redo': chain().redo().run(); return;
+
+    // ---- character
+    case 'bold': chain().toggleBold().run(); return;
+    case 'italic': chain().toggleItalic().run(); return;
+    case 'underline': chain().toggleUnderline().run(); return;
+    case 'strike': chain().toggleStrike().run(); return;
+    case 'subscript': chain().toggleSubscript().run(); return;
+    case 'superscript': chain().toggleSuperscript().run(); return;
+    case 'clearFormat': chain().unsetAllMarks().run(); return;
+    case 'fontFamily': chain().setFontFamily(arg).run(); return;
+    case 'fontSize': chain().setFontSize(`${arg}pt`).run(); return;
+    case 'growFont': chain().stepFontSize(1).run(); return;
+    case 'shrinkFont': chain().stepFontSize(-1).run(); return;
+    case 'color': chain().setColor(app.lastColor).run(); return;
+    case 'colorMenu': colorMenu(el, { onPick: (c) => { if (c) { app.lastColor = c; chain().setColor(c).run(); } else chain().unsetColor().run(); scheduleUI(); } }); return;
+    case 'highlight': chain().toggleHighlight({ color: app.lastHighlight }).run(); return;
+    case 'highlightMenu': colorMenu(el, { noneLabel: 'Vurgu yok', onPick: (c) => { if (c) { app.lastHighlight = c; chain().setHighlight({ color: c }).run(); } else chain().unsetHighlight().run(); scheduleUI(); } }); return;
+
+    // ---- paragraph
+    case 'align': chain().setParagraphAttrs({ align: arg }).run(); return;
+    case 'bullets': chain().toggleUdfList('bullet').run(); return;
+    case 'numbers': chain().toggleUdfList('number').run(); return;
+    case 'bulletsMenu': menu(el, BULLET_TYPES.map((b) => ({ html: `<span style="width:22px;display:inline-block">${b.sample}</span>${esc(b.type.replace('BULLET_TYPE_', '').toLowerCase())}`, onClick: () => chain().toggleUdfList('bullet', b.type).run() }))); return;
+    case 'numbersMenu': menu(el, NUMBER_TYPES.map((n) => ({ html: `<span style="width:30px;display:inline-block">${n.sample}</span>${n.sample.replace(/\w/, '…')}`, onClick: () => chain().toggleUdfList('number', n.type).run() }))); return;
+    case 'indent': if (ed.getAttributes('paragraph').list) chain().listLevel(1).run(); else chain().indent(35.4).run(); return;
+    case 'outdent': if (ed.getAttributes('paragraph').list) chain().listLevel(-1).run(); else chain().indent(-35.4).run(); return;
+    case 'firstLine': { const on = (ed.getAttributes('paragraph').firstLineIndent || 0) > 0; chain().setParagraphAttrs({ firstLineIndent: on ? 0 : 35.4 }).run(); return; }
+    case 'lineSpacingMenu': {
+      const cur = ed.getAttributes('paragraph');
+      const ls = [[0, '1,0'], [0.15, '1,15'], [0.5, '1,5'], [1, '2,0'], [1.5, '2,5'], [2, '3,0']];
+      menu(el, [
+        { header: 'Satır aralığı' },
+        ...ls.map(([v, l]) => ({ label: l, checked: Math.abs((cur.lineSpacing || 0) - v) < 0.02, onClick: () => chain().setParagraphAttrs({ lineSpacing: v }).run() })),
+        { sep: true },
+        { label: (cur.spaceAbove ? 'Paragraftan önceki boşluğu kaldır' : 'Paragraftan önce boşluk ekle (6 nk)'), onClick: () => chain().setParagraphAttrs({ spaceAbove: cur.spaceAbove ? 0 : 6 }).run() },
+        { label: (cur.spaceBelow ? 'Paragraftan sonraki boşluğu kaldır' : 'Paragraftan sonra boşluk ekle (6 nk)'), onClick: () => chain().setParagraphAttrs({ spaceBelow: cur.spaceBelow ? 0 : 6 }).run() },
+      ]);
+      return;
+    }
+    case 'paraField': {
+      const v = parseFloat(arg.value) || 0;
+      const pt = /Indent/.test(arg.field) ? v * CM : v;
+      chain().setParagraphAttrs({ [arg.field]: pt }).run();
+      return;
+    }
+    case 'style': applyParaStyle(ed, arg); return;
+    case 'marks': document.body.classList.toggle('show-marks'); app.active?.editor.commands.repaginate(); scheduleUI(); return;
+
+    // ---- find
+    case 'find': openFind(false); return;
+    case 'replace': openFind(true); return;
+
+    // ---- insert
+    case 'tableMenu': gridMenu(el, (r, c) => {
+      const w = Math.floor((tab.geom.pageW - tab.geom.left - tab.geom.right) / c);
+      const P = () => ({ type: 'paragraph', attrs: defaultParaAttrs() });
+      const rows = Array.from({ length: r }, () => ({ type: 'tableRow', attrs: { udf: {} }, content: Array.from({ length: c }, () => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [w], udf: {} }, content: [P()] })) }));
+      chain().insertContent({ type: 'table', attrs: { udf: {} }, content: rows }).run();
+    }); return;
+    case 'image': insertImage(ed); return;
+    case 'dateMenu': menu(el, DATE_FORMATS().map((d) => ({ label: d, onClick: () => chain().insertContent(d).run() }))); return;
+    case 'symbolMenu': {
+      const wrap = h('<div class="swatches" style="grid-template-columns:repeat(7,30px)"></div>');
+      for (const s of SYMBOLS) {
+        const b = h(`<button style="width:30px;height:30px;background:var(--surface);font-size:16px">${s}</button>`);
+        b.onclick = () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); chain().insertContent(s).run(); };
+        wrap.append(b);
+      }
+      menu(el, wrap);
+      return;
+    }
+    case 'blockMenu': menu(el, BLOCKS.map((b) => ({ label: b.name, onClick: () => chain().insertContent(b.build(app.profile)).run() }))); return;
+
+    // ---- table
+    case 'table': {
+      const c = chain();
+      if (typeof c[arg] === 'function') c[arg]().run();
+      return;
+    }
+    case 'tableBorder': {
+      const { $from } = ed.state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        const n = $from.node(d);
+        if (n.type.name === 'table') {
+          const udf = { ...(n.attrs.udf || {}) };
+          udf.border = (udf.border || 'borderCell') === 'borderNone' ? 'borderCell' : 'borderNone';
+          ed.view.dispatch(ed.state.tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, udf }));
+          break;
+        }
+      }
+      return;
+    }
+
+    // ---- layout
+    case 'marginsMenu': {
+      const presets = [
+        ['Normal (UYAP)', { topMargin: '56.7', bottomMargin: '56.7', leftMargin: '70.875', rightMargin: '70.875' }, 'Üst/Alt 2 cm · Sol/Sağ 2,5 cm'],
+        ['Dar', { topMargin: '36.0', bottomMargin: '36.0', leftMargin: '36.0', rightMargin: '36.0' }, 'Tümü 1,27 cm'],
+        ['Orta', { topMargin: '70.875', bottomMargin: '70.875', leftMargin: '70.875', rightMargin: '70.875' }, 'Tümü 2,5 cm'],
+        ['Geniş', { topMargin: '70.875', bottomMargin: '70.875', leftMargin: '85.05', rightMargin: '85.05' }, 'Sol/Sağ 3 cm'],
+      ];
+      menu(el, [...presets.map(([l, p, d]) => ({ html: `<div><div>${l}</div><div class="dim small">${d}</div></div>`, onClick: () => setPageFormat(tab, p) })), { sep: true }, { label: 'Özel kenar boşlukları…', onClick: () => pageSetup(tab) }]);
+      return;
+    }
+    case 'orientationMenu': {
+      const port = (tab.meta.pageFormat.paperOrientation || '1') === '1';
+      menu(el, [{ label: 'Dikey', checked: port, onClick: () => setPageFormat(tab, { paperOrientation: '1' }) }, { label: 'Yatay', checked: !port, onClick: () => setPageFormat(tab, { paperOrientation: '0' }) }]);
+      return;
+    }
+    case 'pageSetup': pageSetup(tab); return;
+    case 'headerFooter': headerFooterDialog(tab); return;
+    case 'pageNumbers': togglePageNumbers(tab); return;
+
+    // ---- sign / uyap
+    case 'sign':
+      if (!tab) return;
+      if (tab.sig?.state === 'valid' && !tab.dirty && !(await confirmBox({ title: 'Belge zaten imzalı', text: 'Mevcut imza yeni imzayla değiştirilecek. Devam edilsin mi?', ok: 'Yeniden imzala', kind: 'ok', icon: 'sign' }))) return;
+      signDialog(app, tab);
+      return;
+    case 'signInfo': if (tab) signatureInfo(app, tab); return;
+    case 'driverSettings': driverSettings(); return;
+    case 'uyapOpen': native.uyap.open(); return;
+    case 'uyapSend': if (tab) uyapSendFlow(app, tab); return;
+    case 'uyapAttach': {
+      if (!tab?.path || tab.dirty) { toast('Önce belgeyi kaydedip imzalayın.', { type: 'warn' }); return; }
+      const r = await native.uyap.attach(tab.path);
+      toast(r.ok ? 'Dosya portalın yükleme alanına eklendi.' : r.error, { type: r.ok ? 'ok' : 'warn', ms: 6000 });
+      return;
+    }
+    case 'uyapSettings': uyapSettings(); return;
+
+    // ---- view
+    case 'toggleNav': $('#nav-pane').classList.toggle('hidden'); localStorage.setItem('udf.nav', $('#nav-pane').classList.contains('hidden') ? '0' : '1'); refreshNav(); scheduleUI(); return;
+    case 'focusMode': document.body.classList.toggle('focus-mode'); if (document.body.classList.contains('focus-mode')) toast('Odak modu — çıkmak için F11 veya Esc'); return;
+    case 'zoom': setZoom(parseFloat(arg)); return;
+    case 'zoomFit': if (tab) setZoom(Math.max(0.5, Math.min(2, (tab.host.clientWidth - 60) / tab.geom.pageW))); return;
+    default:
+      console.warn('unknown command', name);
+  }
+}
+
+function setZoom(z) {
+  app.zoom = Math.round(Math.min(2, Math.max(0.5, z)) * 100) / 100;
+  localStorage.setItem('udf.zoom', String(app.zoom));
+  for (const t of app.tabs) applyZoom(t);
+  scheduleUI();
+}
+
+// ================================================================== find bar
+
+function openFind(replace) {
+  const ed = app.ed();
+  if (!ed) return;
+  const bar = $('#findbar');
+  bar.classList.remove('hidden');
+  $('#replace-row').classList.toggle('hidden', !replace);
+  const inp = $('#find-input');
+  const { from, to } = ed.state.selection;
+  const sel = ed.state.doc.textBetween(from, to, ' ');
+  if (sel && sel.length < 80 && !sel.includes('\n')) inp.value = sel;
+  inp.focus();
+  inp.select();
+  doFind();
+}
+let matchCase = false;
+function doFind() {
+  const ed = app.ed();
+  if (!ed) return;
+  ed.commands.setSearch($('#find-input').value, matchCase);
+  const s = ed.storage.udfSearch;
+  $('#find-count').textContent = s.query ? (s.matches.length ? `${s.current + 1} / ${s.matches.length}` : 'Bulunamadı') : '';
+}
+function findStep(dir) {
+  const ed = app.ed();
+  if (!ed) return;
+  ed.commands.searchStep(dir);
+  doFind();
+}
+function closeFind() {
+  $('#findbar').classList.add('hidden');
+  app.ed()?.commands.setSearch('');
+  app.ed()?.commands.focus();
+}
+
+// ================================================================== navigation pane
+
+let navMode = 'headings';
+let navTimer = null;
+function scheduleNav() { clearTimeout(navTimer); navTimer = setTimeout(refreshNav, 350); }
+
+function blockTextMap(node, pos) {
+  let text = '';
+  const map = [];
+  node.forEach((child, offset) => {
+    if (child.isText) { for (let i = 0; i < child.text.length; i++) map.push(pos + 1 + offset + i); text += child.text; }
+    else { map.push(pos + 1 + offset); text += '￼'; }
+  });
+  return { text, map };
+}
+
+function refreshNav() {
+  const list = $('#nav-list');
+  const ed = app.ed();
+  if ($('#nav-pane').classList.contains('hidden')) return;
+  if (!ed) { list.innerHTML = '<div class="nav-empty">Açık belge yok.</div>'; return; }
+  const items = [];
+  const doc = ed.state.doc;
+  if (navMode === 'headings') {
+    doc.descendants((node, pos) => {
+      if (node.type.name === 'table') return false;
+      if (node.type.name !== 'paragraph' || !node.content.size) return node.type.name !== 'paragraph';
+      const first = node.firstChild;
+      const bold = first?.marks.some((m) => m.type.name === 'bold');
+      if (!bold) return false;
+      // bold prefix (until the first non-bold run)
+      let label = '';
+      node.forEach((c) => { if (label !== null && c.isText && c.marks.some((m) => m.type.name === 'bold')) label += c.text; else if (label) label = label === '' ? '' : label; });
+      label = label.split(/\t|:/)[0].trim();
+      if (label.length < 3 || label.length > 110) return false;
+      const letters = label.replace(/[^A-Za-zÇĞİÖŞÜçğıöşü]/g, '');
+      const upper = letters && letters === letters.toLocaleUpperCase('tr');
+      const centered = node.attrs.align === 'center';
+      if (!upper && !centered && !/^([IVX]+|[A-ZÇĞİÖŞÜ]|\d+)[.)-]\s/.test(label)) return false;
+      items.push({ label, pos, cls: centered ? 'l1' : (/^[A-ZÇĞİÖŞÜ]\)|^\d/.test(label) ? 'l2' : 'l1') });
+      return false;
+    });
+  } else if (navMode === 'fill') {
+    doc.descendants((node, pos) => {
+      if (!node.isTextblock) return true;
+      const { text, map } = blockTextMap(node, pos);
+      for (const m of text.matchAll(/\[[^\]\n]{0,120}\]|…{2,}|\.{5,}/g)) items.push({ label: m[0], from: map[m.index], to: map[m.index + m[0].length - 1] + 1 });
+      return false;
+    });
+  } else {
+    doc.descendants((node, pos) => {
+      if (!node.isText) return true;
+      const f = node.marks.find((m) => m.type.name === 'udfRun' && m.attrs.extra?.fieldName);
+      if (f) items.push({ label: `${f.attrs.extra.fieldName}: ${node.text.trim().slice(0, 40)}`, from: pos, to: pos + node.nodeSize });
+      return false;
+    });
+  }
+  if (!items.length) {
+    list.innerHTML = `<div class="nav-empty">${navMode === 'headings' ? 'Kalın ve büyük harfli başlıklar (AÇIKLAMALAR, SONUÇ VE İSTEM…) burada listelenir.' : navMode === 'fill' ? 'Doldurulacak yer yok. [köşeli parantezli] metinler ve ……… boşluklar burada listelenir.' : 'Bu belgede UYAP şablon alanı yok.'}</div>`;
+    return;
+  }
+  list.innerHTML = '';
+  for (const it of items.slice(0, 400)) {
+    const el = h(`<div class="nav-item ${it.cls || ''}" title="${esc(it.label)}">${esc(it.label)}</div>`);
+    el.onclick = () => {
+      const e = app.ed();
+      if (it.from != null) e.chain().focus().setTextSelection({ from: it.from, to: it.to }).scrollIntoView().run();
+      else e.chain().focus().setTextSelection(it.pos + 1).scrollIntoView().run();
+    };
+    list.append(el);
+  }
+}
+
+// ================================================================== status + ui refresh
+
+let uiQueued = false;
+function scheduleUI() {
+  if (uiQueued) return;
+  uiQueued = true;
+  requestAnimationFrame(() => { uiQueued = false; refreshUI(); });
+}
+
+function wordCount(tab) {
+  const t = docText(tab.editor.getJSON());
+  return (t.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu) || []).length;
+}
+let wcTimer = null;
+
+function refreshUI() {
+  ribbon?.refresh();
+  const tab = app.active;
+  const pill = $('#sig-pill'), sb = $('#sb-sig');
+  $('#btn-quick-sign').disabled = !tab;
+  $('#btn-quick-uyap').disabled = !tab;
+  $('#zoom-label').textContent = `${Math.round(app.zoom * 100)}%`;
+  $('#zoom-range').value = String(Math.round(app.zoom * 100));
+  $('#sb-marks').classList.toggle('active', document.body.classList.contains('show-marks'));
+  if (!tab) {
+    pill.className = 'pill hidden';
+    $('#sb-page').textContent = '';
+    $('#sb-words').textContent = '';
+    sb.innerHTML = '';
+    return;
+  }
+  const s = tab.sig;
+  let cls = '', txt = 'İmzasız', ic = 'shield';
+  if (s?.state === 'valid') { cls = 'ok'; txt = `İmzalı · ${s.info?.signer?.subjectCN || ''}`; ic = 'verify'; }
+  else if (s?.state === 'stale') { cls = 'warn'; txt = 'İmza geçersiz olacak — yeniden imzalayın'; ic = 'warn'; }
+  else if (s?.state === 'invalid') { cls = 'bad'; txt = 'İmza doğrulanamadı'; ic = 'warn'; }
+  pill.className = `pill ${cls}`;
+  pill.innerHTML = `${icon(ic)}<span>${esc(txt)}</span>`;
+  sb.className = `sb-btn ${cls}`;
+  sb.innerHTML = `${icon(ic)}${esc(s ? (s.state === 'valid' ? 'İmzalı' : s.state === 'stale' ? 'İmza eski' : 'İmza hatalı') : 'İmzasız')}`;
+  const page = pageOfPos(tab.editor.view, tab.editor.state.selection.from);
+  $('#sb-page').textContent = `Sayfa ${Math.min(page, tab.pages)} / ${tab.pages}`;
+  clearTimeout(wcTimer);
+  wcTimer = setTimeout(() => { if (app.active === tab) $('#sb-words').textContent = `${wordCount(tab).toLocaleString('tr-TR')} kelime`; }, 250);
+}
+
+// ================================================================== wiring
+
+function wireChrome() {
+  $('#btn-newtab').innerHTML = icon('plus');
+  $('#btn-newtab').onclick = () => (app.tabs.length ? backstage('new') : newDocument('blank'));
+  $('#btn-quick-sign').innerHTML = `${icon('sign')}<span>İmzala</span>`;
+  $('#btn-quick-sign').onclick = () => runCmd('sign');
+  $('#btn-quick-uyap').innerHTML = `${icon('upload')}<span>UYAP'a gönder</span>`;
+  $('#btn-quick-uyap').onclick = () => runCmd('uyapSend');
+  $('#sig-pill').onclick = () => runCmd('signInfo');
+  $('#sb-sig').onclick = () => runCmd('signInfo');
+  $('#nav-close').innerHTML = icon('close');
+  $('#nav-close').onclick = () => runCmd('toggleNav');
+  $$('.nav-tabs button').forEach((b) => { b.onclick = () => { navMode = b.dataset.nav; $$('.nav-tabs button').forEach((x) => x.classList.toggle('active', x === b)); refreshNav(); }; });
+  if (localStorage.getItem('udf.nav') === '0') $('#nav-pane').classList.add('hidden');
+  $('#zoom-in').innerHTML = icon('plus');
+  $('#zoom-out').innerHTML = '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>';
+  $('#zoom-in').onclick = () => setZoom(app.zoom + 0.1);
+  $('#zoom-out').onclick = () => setZoom(app.zoom - 0.1);
+  $('#zoom-label').onclick = () => setZoom(1);
+  $('#zoom-range').oninput = (e) => setZoom(e.target.value / 100);
+  $('#sb-marks').innerHTML = icon('pilcrow');
+  $('#sb-marks').onclick = () => runCmd('marks');
+  $('#sb-focus').innerHTML = icon('focus');
+  $('#sb-focus').onclick = () => runCmd('focusMode');
+
+  // find bar
+  $('#find-prev').innerHTML = '<svg class="ic" viewBox="0 0 24 24"><path d="M18 15l-6-6-6 6"/></svg>';
+  $('#find-next').innerHTML = icon('chevron');
+  $('#find-close').innerHTML = icon('close');
+  $('#find-input').oninput = doFind;
+  $('#find-input').onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    if (e.key === 'Escape') closeFind();
+  };
+  $('#replace-input').onkeydown = (e) => { if (e.key === 'Escape') closeFind(); if (e.key === 'Enter') { e.preventDefault(); $('#replace-one').click(); } };
+  $('#find-prev').onclick = () => findStep(-1);
+  $('#find-next').onclick = () => findStep(1);
+  $('#find-close').onclick = closeFind;
+  $('#find-case').onclick = () => { matchCase = !matchCase; $('#find-case').classList.toggle('active', matchCase); $('#find-case').style.color = matchCase ? 'var(--accent)' : ''; doFind(); };
+  $('#replace-one').onclick = () => { const ed = app.ed(); if (!ed) return; ed.commands.replaceCurrent($('#replace-input').value); doFind(); };
+  $('#replace-all').onclick = () => {
+    const ed = app.ed();
+    if (!ed) return;
+    const n = ed.storage.udfSearch.matches.length;
+    ed.commands.replaceAll($('#replace-input').value);
+    doFind();
+    toast(`${n} yer değiştirildi`, { type: 'ok', ms: 2000 });
+  };
+
+  // keyboard
+  document.addEventListener('keydown', (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (e.key === 'F11' || (e.key === 'Escape' && document.body.classList.contains('focus-mode'))) { e.preventDefault(); runCmd('focusMode'); return; }
+    if (e.key === 'Escape' && !$('#backstage').classList.contains('hidden')) { $('#backstage').classList.add('hidden'); return; }
+    if (e.key === 'Escape' && !$('#findbar').classList.contains('hidden')) { closeFind(); return; }
+    if (!mod) return;
+    const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
+    if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
+    if (k === '=' || k === '+') { e.preventDefault(); setZoom(app.zoom + 0.1); }
+    if (k === '-') { e.preventDefault(); setZoom(app.zoom - 0.1); }
+    if (k === '0') { e.preventDefault(); setZoom(1); }
+    if (k === 'tab' && app.tabs.length > 1) {
+      e.preventDefault();
+      const i = app.tabs.indexOf(app.active);
+      activate(app.tabs[(i + (e.shiftKey ? -1 : 1) + app.tabs.length) % app.tabs.length]);
+    }
+  });
+  window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey || !app.active) return;
+    e.preventDefault();
+    setZoom(app.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+  }, { passive: false });
+
+  // drag & drop .udf files
+  let dragDepth = 0;
+  window.addEventListener('dragenter', (e) => { if ([...e.dataTransfer.types].includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
+  window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
+  window.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+  window.addEventListener('drop', async (e) => {
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.udf$/i.test(f.name));
+    if (!files.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    for (const f of files) {
+      const p = native.pathForFile(f);
+      if (p) await openPath(p);
+      else await openBytes(new Uint8Array(await f.arrayBuffer()), { path: null, title: f.name.replace(/\.udf$/i, '') });
+    }
+  }, true);
+
+  native.onOpenPaths(async (paths) => { $('#backstage').classList.add('hidden'); for (const p of paths) await openPath(p); });
+  native.onToast((msg, path) => toast(msg, { type: 'ok', actions: path ? [{ label: 'Klasörde göster', onClick: () => native.showInFolder(path) }] : [] }));
+  native.onBeforeClose(async () => {
+    const dirty = app.tabs.filter((t) => t.dirty);
+    if (!dirty.length) { native.closeOk(); return; }
+    const r = await confirmBox({ title: 'Kaydedilmemiş değişiklikler', text: `${dirty.map((t) => `<b>${esc(t.title)}</b>`).join(', ')} kaydedilmedi.`, ok: 'Kaydet ve çık', extra: { label: 'Kaydetmeden çık', value: 'discard', kind: 'danger' } });
+    if (r === 'discard') { native.closeOk(); return; }
+    if (r !== true) return;
+    for (const t of dirty) { activate(t); if (!(await save(t))) return; }
+    native.closeOk();
+  });
+}
+
+// ================================================================== smoke scenario (npm run smoke)
+
+window.__smoke = {
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'table', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  async run(step, out) {
+    const sep = out.includes('\\') ? '\\' : '/';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    $('#modal-root').innerHTML = '';
+    switch (step) {
+      case 'start': return { ok: true, tabs: app.tabs.length };
+      case 'table': {
+        const t = newDocument('blank');
+        await wait(200);
+        t.editor.chain().focus().insertContent('Ekler:').insertContent({ type: 'table', attrs: { udf: {} }, content: [0, 1].map(() => ({ type: 'tableRow', attrs: { udf: {} }, content: [0, 1, 2].map(() => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [200], udf: {} }, content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: 'Hücre' }] }] })) })) }).run();
+        t.editor.commands.setTextSelection(12);
+        await wait(300);
+        const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
+        return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'ui-insert': case 'ui-layout': case 'ui-sign': case 'ui-uyap': case 'ui-view':
+        ribbon.show(step.slice(3));
+        return { ok: true };
+      case 'backstage': ribbon.show('home'); backstage('new'); return { ok: true };
+      case 'welcome': {
+        $('#backstage').classList.add('hidden');
+        for (const t of [...app.tabs]) { t.dirty = false; await closeTab(t); }
+        return { ok: !$('#welcome').classList.contains('hidden') };
+      }
+      case 'debug': {
+        const t = app.active;
+
+        const st = paginationKey.getState(t.editor.state);
+        const sp = [...t.sheet.querySelectorAll('.page-spacer')].map((e) => ({ h: Math.round(e.getBoundingClientRect().height), inP: e.parentElement.tagName, top: Math.round(e.getBoundingClientRect().top) }));
+        return { ok: true, pages: t.pages, breaks: st.breaks.map((b) => [b.pos, Math.round(b.fill)]), sp, sheetH: t.sheet.offsetHeight, scrollTop: t.host.scrollTop, docSize: t.editor.state.doc.content.size };
+      }
+      case 'template': {
+        const t = newDocument('dava');
+        await wait(600);
+        return { ok: t.pages >= 1 && t.editor.getText().includes('SONUÇ VE İSTEM'), pages: t.pages };
+      }
+      case 'long': {
+        const P = (text, attrs = {}) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), align: 'justify', lineSpacing: 0.5, firstLineIndent: 35.4, ...attrs }, content: [{ type: 'text', text }] });
+        const lorem = 'Davacı ile davalı arasında akdedilen sözleşme uyarınca davalı şirketin edimlerini zamanında ve gereği gibi ifa etmediği, ihtarnameye rağmen temerrüdün devam ettiği ve bu nedenle müvekkilin uğradığı zararın tazmini gerektiği açıktır. ';
+        const content = [P('İSTANBUL ANADOLU 3. ASLİYE TİCARET MAHKEMESİ', { align: 'center', firstLineIndent: 0 })];
+        for (let i = 0; i < 40; i++) content.push(P(lorem.repeat(1 + (i % 4)), i % 7 === 3 ? { list: { kind: 'number', type: 'NUMBER_TYPE_NUMBER_DOT', id: '1', level: 1 }, leftIndent: 25, firstLineIndent: -18 } : {}));
+        const meta = newDocMeta();
+        meta.footer = { attrs: { 'pageNumber-spec': 'BSP32_72', 'pageNumber-seperator': '/' }, content: [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
+        const t = newTab({ title: 'Uzun belge', doc: { type: 'doc', content }, meta });
+        await wait(1200);
+        const spacers = t.sheet.querySelectorAll('.page-spacer').length;
+        t.host.scrollTop = t.geom.pageH * app.zoom * 0.82;
+        return { ok: t.pages >= 3 && spacers === t.pages - 1, pages: t.pages, spacers };
+      }
+      case 'format': {
+        const ed = app.ed();
+        ed.commands.setTextSelection({ from: 1, to: 30 });
+        ed.commands.toggleBold();
+        ed.commands.setFontSize('14pt');
+        ed.commands.setTextSelection(60);
+        ed.commands.toggleUdfList('bullet');
+        await wait(300);
+        const j = ed.getJSON();
+        const first = j.content[0].content[0];
+        return { ok: first.marks?.some((m) => m.type === 'bold') && j.content.some((p) => p.attrs?.list?.kind === 'bullet'), marks: first.marks };
+      }
+      case 'roundtrip': {
+        const t = app.active;
+        const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
+        const back = parseUdfXml(xml);
+        const p = `${out}${sep}smoke.udf`;
+        await native.writeFile(p, writeUdf({ contentXml: xml }));
+        const again = parseUdfXml(readUdf(await native.readFile(p)).contentText);
+        const ok = docText(back.doc) === docText(t.editor.getJSON()) && JSON.stringify(again.doc) === JSON.stringify(back.doc);
+        return { ok, chars: xml.length };
+      }
+      case 'pdf': {
+        const bytes = await makePdf(app.active);
+        await native.writeFile(`${out}${sep}smoke.pdf`, bytes);
+        return { ok: bytes.length > 2000 && String.fromCharCode(...bytes.slice(0, 5)) === '%PDF-', bytes: bytes.length };
+      }
+      case 'signdialog': {
+        signDialog(app, app.active);
+        await wait(2500);
+        const drivers = [...document.querySelectorAll('#sg-driver option')].map((o) => o.textContent);
+        const certs = document.querySelectorAll('.cert').length;
+        const msg = document.querySelector('#sg-msg')?.textContent || '';
+        return { ok: true, drivers, certs, msg };
+      }
+      case 'real': {
+        const sample = recents().find((r) => /\.udf$/i.test(r.path) && !r.path.includes('smoke'));
+        if (!sample) return { ok: true, skipped: true };
+        const t = await openPath(sample.path);
+        await wait(1500);
+        return { ok: !!t, pages: t?.pages, signed: t?.sig?.state || 'none' };
+      }
+      default: return { ok: false, error: 'unknown step' };
+    }
+  },
+};
+
+// ================================================================== boot
+
+(async function boot() {
+  wireChrome();
+  ribbon = createRibbon(app);
+  try { app.profile = (await native.settings.get()).profile || {}; } catch {}
+  renderWelcome();
+  activate(null);
+})();

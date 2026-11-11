@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'">
+  <title>UDF Editör</title>
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <div id="tabbar">
+    <div id="tabs"></div>
+    <button id="btn-newtab" class="icon-btn" title="Yeni belge (Ctrl+N)"></button>
+  </div>
+
+  <div id="ribbon-head">
+    <nav id="ribbon-tabs"></nav>
+    <div class="head-spacer"></div>
+    <span id="sig-pill" class="pill" title="İmza durumu"></span>
+    <button id="btn-quick-sign" class="btn ok"></button>
+    <button id="btn-quick-uyap" class="btn primary"></button>
+  </div>
+  <div id="ribbon"></div>
+
+  <div id="main-row">
+    <aside id="nav-pane">
+      <div class="nav-head"><span>Gezinti</span><button class="icon-btn" id="nav-close" title="Kapat"></button></div>
+      <div class="nav-tabs">
+        <button data-nav="headings" class="active">Başlıklar</button>
+        <button data-nav="fill">Doldurulacak</button>
+        <button data-nav="fields">UYAP alanları</button>
+      </div>
+      <div class="nav-list" id="nav-list"></div>
+    </aside>
+    <section id="doc-area">
+      <div id="findbar" class="hidden">
+        <div class="row">
+          <input type="text" id="find-input" placeholder="Belgede ara" spellcheck="false">
+          <span class="count" id="find-count"></span>
+          <button class="icon-btn" id="find-prev" title="Önceki (Shift+Enter)"></button>
+          <button class="icon-btn" id="find-next" title="Sonraki (Enter)"></button>
+          <button class="icon-btn" id="find-case" title="Büyük/küçük harf duyarlı">Aa</button>
+          <button class="icon-btn" id="find-close" title="Kapat (Esc)"></button>
+        </div>
+        <div class="row" id="replace-row">
+          <input type="text" id="replace-input" placeholder="Şununla değiştir" spellcheck="false">
+          <button class="btn" id="replace-one">Değiştir</button>
+          <button class="btn" id="replace-all">Tümü</button>
+        </div>
+      </div>
+      <div id="welcome"></div>
+    </section>
+  </div>
+
+  <footer id="statusbar">
+    <span id="sb-page">Sayfa 1 / 1</span>
+    <span id="sb-words"></span>
+    <span id="sb-lang">Türkçe</span>
+    <button class="sb-btn" id="sb-sig"></button>
+    <span class="sb-sep"></span>
+    <button class="sb-btn" id="sb-marks" title="Biçimlendirme işaretleri"></button>
+    <button class="sb-btn" id="sb-focus" title="Odak modu (F11)"></button>
+    <button class="sb-btn" id="zoom-out" title="Uzaklaş"></button>
+    <input type="range" id="zoom-range" min="50" max="200" step="10" value="100">
+    <button class="sb-btn" id="zoom-in" title="Yakınlaş"></button>
+    <button class="sb-btn" id="zoom-label" title="%100">100%</button>
+  </footer>
+
+  <div id="backstage" class="hidden"></div>
+  <div id="modal-root"></div>
+  <div id="toasts"></div>
+  <script src="dist/renderer.js"></script>
+</body>
+</html>
