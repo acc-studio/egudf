@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('native', {
   bundledFont: (name) => ipcRenderer.invoke('font:bundled', name),
   info: () => ipcRenderer.invoke('app:info'),
   copyText: (t) => ipcRenderer.invoke('clipboard:writeText', t),
+  readText: () => ipcRenderer.invoke('clipboard:readText'),
+  edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
+  setTheme: (t) => ipcRenderer.invoke('theme:set', t),
+  onContextMenu: on('context-menu'),
   egpdf: {
     available: () => ipcRenderer.invoke('egpdf:available'),
     open: (bytes, name) => ipcRenderer.invoke('egpdf:open', bytes, name),

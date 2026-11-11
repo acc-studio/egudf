@@ -27,11 +27,11 @@ const col = (...rows) => `<div class="rcol">${rows.map((r) => `<div class="rrow"
 
 const TABS = {
   home: () => [
-    group('Pano', big('paste', 'paste', 'Yapıştır', { title: 'Yapıştır (Ctrl+V)' }) + col(btn('cut', 'cut', 'Kes (Ctrl+X)', { label: 'Kes' }), btn('copy', 'copy', 'Kopyala (Ctrl+C)', { label: 'Kopyala' }))),
+    group('Pano', big('paste', 'paste', 'Yapıştır', { title: 'Yapıştır (Ctrl+V)' }) + col(btn('cut', 'cut', 'Kes (Ctrl+X)', { label: 'Kes' }), btn('copy', 'copy', 'Kopyala (Ctrl+C)', { label: 'Kopyala' }), btn('formatPainter', 'painter', 'Biçim boyacısı — çift tıklayınca açık kalır', { label: 'Biçim boyacısı' }))),
     group('Yazı Tipi', col(
       `<select class="rsel font" data-input="fontFamily" title="Yazı tipi">${FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join('')}</select>`
         + `<select class="rsel size" data-input="fontSize" title="Yazı boyutu">${SIZES.map((s) => `<option>${s}</option>`).join('')}</select>`
-        + btn('growFont', 'growFont', 'Yazıyı büyüt (Ctrl+Shift+>)') + btn('shrinkFont', 'shrinkFont', 'Yazıyı küçült (Ctrl+Shift+<)') + btn('clearFormat', 'clear', 'Biçimi temizle'),
+        + btn('growFont', 'growFont', 'Yazıyı büyüt (Ctrl+Shift+>)') + btn('shrinkFont', 'shrinkFont', 'Yazıyı küçült (Ctrl+Shift+<)') + btn('changeCaseMenu', 'case', 'Büyük/küçük harf (Shift+F3)') + btn('clearFormat', 'clear', 'Biçimi temizle (Ctrl+Space)'),
       btn('bold', 'bold', 'Kalın (Ctrl+B)') + btn('italic', 'italic', 'İtalik (Ctrl+I)') + btn('underline', 'underline', 'Altı çizili (Ctrl+U)') + btn('strike', 'strike', 'Üstü çizili')
         + btn('subscript', 'sub', 'Alt simge') + btn('superscript', 'sup', 'Üst simge')
         + split('color', 'color', 'Yazı rengi', 'colorMenu', { cls: 'swatch-color' }) + split('highlight', 'highlight', 'Vurgu rengi', 'highlightMenu', { cls: 'swatch-hl' }),
@@ -41,10 +41,10 @@ const TABS = {
         + btn('outdent', 'outdent', 'Girintiyi azalt') + btn('indent', 'indent', 'Girintiyi artır') + btn('marks', 'pilcrow', 'Biçimlendirme işaretlerini göster'),
       btn('align', 'alignLeft', 'Sola hizala (Ctrl+L)', { arg: 'left' }) + btn('align', 'alignCenter', 'Ortala (Ctrl+E)', { arg: 'center' })
         + btn('align', 'alignRight', 'Sağa hizala (Ctrl+R)', { arg: 'right' }) + btn('align', 'alignJustify', 'İki yana yasla (Ctrl+J)', { arg: 'justify' })
-        + btn('lineSpacingMenu', 'lineSpacing', 'Satır ve paragraf aralığı') + btn('firstLine', 'indent', 'İlk satır girintisi (1,25 cm)', { label: '' }),
+        + btn('lineSpacingMenu', 'lineSpacing', 'Satır ve paragraf aralığı') + btn('firstLine', 'indent', 'İlk satır girintisi (1,25 cm)', { label: '' }) + btn('paragraphDialog', 'page', 'Paragraf ayarları…'),
     )),
     group('Stiller', `<div class="gallery">${PARA_STYLES.map((s) => `<div class="gi" data-cmd="style" data-arg="${s.id}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>`, 'shrink'),
-    group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }))),
+    group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }), btn('selectAll', 'page', 'Tümünü seç (Ctrl+A)', { label: 'Tümünü seç' }))),
   ],
   insert: () => [
     group('Tablolar', big('tableMenu', 'table', 'Tablo')),
@@ -71,6 +71,8 @@ const TABS = {
   ],
   view: () => [
     group('Göster', big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
+    group('Tema', big('theme', 'monitor', 'Sistem', { arg: 'system', title: 'Windows temasını izle' }) + big('theme', 'sun', 'Açık', { arg: 'light' }) + big('theme', 'theme', 'Koyu', { arg: 'dark' })),
+    group('Yardım', big('shortcuts', 'key', 'Klavye<br>kısayolları') + big('wordCount', 'info', 'Sözcük<br>sayısı')),
     group('Yakınlaştır', big('zoom', 'zoomIn', '%100', { arg: '1' }) + big('zoomFit', 'page', 'Sayfa<br>genişliği') + big('zoom', 'zoomOut', '%75', { arg: '0.75' })),
     group('egPDF', big('openEgpdf', 'egpdf', 'egPDF\'te<br>aç') + big('exportPdf', 'pdf', 'PDF olarak<br>kaydet')),
   ],
@@ -118,6 +120,10 @@ export function createRibbon(app) {
     if (!b || b.disabled) return;
     app.run(b.dataset.cmd, b.dataset.arg, b);
   });
+  body.addEventListener('dblclick', (e) => {
+    const b = e.target.closest('[data-cmd=formatPainter]');
+    if (b && !app.painter?.sticky) { if (app.painter) app.run('formatPainter'); app.run('formatPainter', 'sticky', b); }
+  });
   body.addEventListener('change', (e) => {
     const el = e.target;
     if (el.dataset.input) app.run(el.dataset.input, el.value, el);
@@ -135,7 +141,7 @@ export function createRibbon(app) {
     }
     $$('[data-cmd]', body).forEach((b) => {
       const c = b.dataset.cmd;
-      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks'].includes(c);
+      const docless = ['newFromTemplate', 'uyapOpen', 'driverSettings', 'profile', 'toggleNav', 'focusMode', 'uyapSettings', 'marks', 'theme', 'shortcuts'].includes(c);
       if (b.tagName === 'BUTTON') b.disabled = !has && !docless;
       if (!ed) { b.classList.remove('active'); return; }
       let on = false;
@@ -148,6 +154,8 @@ export function createRibbon(app) {
         case 'numbers': on = p.list?.kind === 'number'; break;
         case 'firstLine': on = (p.firstLineIndent || 0) > 0; break;
         case 'marks': on = document.body.classList.contains('show-marks'); break;
+        case 'theme': on = (app.theme || 'system') === a; break;
+        case 'formatPainter': on = !!app.painter; break;
         case 'toggleNav': on = !$('#nav-pane').classList.contains('hidden'); break;
         case 'pageNumbers': on = !!app.tab()?.meta.footer?.attrs?.['pageNumber-spec']; break;
         default:

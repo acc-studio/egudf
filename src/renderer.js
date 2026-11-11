@@ -11,6 +11,7 @@ import { icon } from './icons.js';
 import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate } from './ui.js';
 import { createRibbon, PARA_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
+import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
 const CM = 28.3465; // points per cm
@@ -26,6 +27,10 @@ const app = {
   ed: () => app.active?.editor || null,
   tab: () => app.active,
   run: (name, arg, el) => runCmd(name, arg, el),
+  ui: () => scheduleUI(),
+  theme: 'system',
+  painter: null,
+  contextExtras: [],
 };
 let seq = 0;
 let ribbon;
@@ -498,6 +503,39 @@ async function insertImage(ed) {
   ed.chain().focus().insertContent({ type: 'image', attrs: { src, width: Math.round(w), height: Math.round(hh) } }).run();
 }
 
+function paragraphDialog(ed) {
+  const p = ed.getAttributes('paragraph');
+  const cm = (v) => String(Math.round(((v || 0) / CM) * 100) / 100);
+  const body = h(`<div>
+    <div class="field-row">
+      <div class="field"><label>Hizalama</label><select id="pd-align"><option value="left">Sola</option><option value="center">Ortala</option><option value="right">Sağa</option><option value="justify">İki yana yasla</option></select></div>
+      <div class="field"><label>Satır aralığı</label><select id="pd-ls"><option value="0">1,0</option><option value="0.15">1,15</option><option value="0.5">1,5</option><option value="1">2,0</option><option value="1.5">2,5</option><option value="2">3,0</option></select></div>
+    </div>
+    <h3 class="sec">Girinti</h3>
+    <div class="field-row">
+      <div class="field"><label>Sol (cm)</label><input type="number" step="0.25" id="pd-l" value="${cm(p.leftIndent)}"></div>
+      <div class="field"><label>Sağ (cm)</label><input type="number" step="0.25" id="pd-r" value="${cm(p.rightIndent)}"></div>
+      <div class="field"><label>İlk satır (cm)</label><input type="number" step="0.25" id="pd-f" value="${cm(p.firstLineIndent)}"></div>
+    </div>
+    <h3 class="sec">Aralık</h3>
+    <div class="field-row">
+      <div class="field"><label>Önce (nk)</label><input type="number" step="1" min="0" id="pd-a" value="${p.spaceAbove || 0}"></div>
+      <div class="field"><label>Sonra (nk)</label><input type="number" step="1" min="0" id="pd-b" value="${p.spaceBelow || 0}"></div>
+    </div>
+    <p class="note">İlk satır için eksi değer asılı girinti verir.</p></div>`);
+  $('#pd-align', body).value = p.align || 'left';
+  const cur = p.lineSpacing || 0;
+  const ls = [0, 0.15, 0.5, 1, 1.5, 2].reduce((best, v) => (Math.abs(v - cur) < Math.abs(best - cur) ? v : best), 0);
+  $('#pd-ls', body).value = String(ls);
+  modal({
+    title: 'Paragraf', icon: 'lineSpacing', body, width: 520,
+    actions: [{ label: 'İptal' }, { label: 'Uygula', kind: 'primary', onClick: () => {
+      const n = (id) => parseFloat($(id, body).value) || 0;
+      ed.chain().focus().setParagraphAttrs({ align: $('#pd-align', body).value, lineSpacing: parseFloat($('#pd-ls', body).value), leftIndent: Math.max(0, n('#pd-l')) * CM, rightIndent: Math.max(0, n('#pd-r')) * CM, firstLineIndent: n('#pd-f') * CM, spaceAbove: Math.max(0, n('#pd-a')), spaceBelow: Math.max(0, n('#pd-b')) }).run();
+    } }],
+  });
+}
+
 // ================================================================== styles
 
 function applyParaStyle(ed, id) {
@@ -581,9 +619,9 @@ async function runCmd(name, arg, el) {
     case 'showInFolder': if (tab?.path) native.showInFolder(tab.path); else toast('Belge henüz kaydedilmedi.', { type: 'warn' }); return;
 
     // ---- clipboard / history
-    case 'cut': ed?.commands.focus(); document.execCommand('cut'); return;
-    case 'copy': ed?.commands.focus(); document.execCommand('copy'); return;
-    case 'paste': ed?.commands.focus(); if (!document.execCommand('paste')) toast('Yapıştırmak için Ctrl+V kullanın.'); return;
+    case 'cut': ed?.commands.focus(); native.edit('cut'); return;
+    case 'copy': ed?.commands.focus(); native.edit('copy'); return;
+    case 'paste': ed?.commands.focus(); native.edit('paste'); return;
     case 'undo': chain().undo().run(); return;
     case 'redo': chain().redo().run(); return;
 
@@ -633,6 +671,24 @@ async function runCmd(name, arg, el) {
     }
     case 'style': applyParaStyle(ed, arg); return;
     case 'marks': document.body.classList.toggle('show-marks'); app.active?.editor.commands.repaginate(); scheduleUI(); return;
+
+    case 'formatPainter': formatPainter(app, { sticky: arg === 'sticky' }); return;
+    case 'changeCaseMenu': changeCaseMenu(app, el); return;
+    case 'changeCase': changeCase(ed, arg); return;
+    case 'cycleCase': { // Shift+F3: lower → UPPER → Sentence
+      const { from, to } = ed.state.selection;
+      const t = ed.state.doc.textBetween(from, to, ' ');
+      const next = t && t === t.toLocaleUpperCase('tr') ? 'sentence' : t && t === t.toLocaleLowerCase('tr') ? 'upper' : 'lower';
+      changeCase(ed, next);
+      return;
+    }
+    case 'paragraphDialog': if (tab) paragraphDialog(ed); return;
+    case 'pastePlain': ed?.commands.focus(); native.edit('pasteAndMatchStyle'); return;
+    case 'selectAll': chain().selectAll().run(); return;
+    case 'wordCount': wordCountDialog(app); return;
+    case 'shortcuts': shortcutsDialog(); return;
+    case 'themeMenu': themeMenu(app, el); return;
+    case 'theme': setTheme(app, arg); return;
 
     // ---- find
     case 'find': openFind(false); return;
@@ -725,6 +781,19 @@ async function runCmd(name, arg, el) {
     default:
       console.warn('unknown command', name);
   }
+}
+
+function captureFormat(ed) {
+  const { $from } = ed.state.selection;
+  return { marks: (ed.state.storedMarks || $from.marks()).filter((m) => !['udfRun', 'insertion', 'deletion', 'comment'].includes(m.type.name)) };
+}
+function applyFormat(ed, f) {
+  const { from, to, empty } = ed.state.selection;
+  if (empty) return;
+  const tr = ed.state.tr;
+  for (const mt of ['bold', 'italic', 'underline', 'strike', 'subscript', 'superscript', 'textStyle', 'highlight']) if (ed.schema.marks[mt]) tr.removeMark(from, to, ed.schema.marks[mt]);
+  for (const m of f.marks) tr.addMark(from, to, m);
+  ed.view.dispatch(tr);
 }
 
 function setZoom(z) {
@@ -867,6 +936,10 @@ function refreshUI() {
   $('#zoom-label').textContent = `${Math.round(app.zoom * 100)}%`;
   $('#zoom-range').value = String(Math.round(app.zoom * 100));
   $('#sb-marks').classList.toggle('active', document.body.classList.contains('show-marks'));
+  for (const b of document.querySelectorAll('#qat [data-qat]')) {
+    const c = b.dataset.qat;
+    b.disabled = !tab || (c === 'undo' && !tab.editor.can().undo()) || (c === 'redo' && !tab.editor.can().redo());
+  }
   if (!tab) {
     pill.className = 'pill hidden';
     $('#sb-page').textContent = '';
@@ -886,12 +959,26 @@ function refreshUI() {
   const page = pageOfPos(tab.editor.view, tab.editor.state.selection.from);
   $('#sb-page').textContent = `Sayfa ${Math.min(page, tab.pages)} / ${tab.pages}`;
   clearTimeout(wcTimer);
-  wcTimer = setTimeout(() => { if (app.active === tab) $('#sb-words').textContent = `${wordCount(tab).toLocaleString('tr-TR')} kelime`; }, 250);
+  wcTimer = setTimeout(() => {
+    if (app.active !== tab) return;
+    const { from, to, empty } = tab.editor.state.selection;
+    const total = wordCount(tab).toLocaleString('tr-TR');
+    $('#sb-words').textContent = empty ? `${total} sözcük` : `${textStats(tab.editor.state.doc.textBetween(from, to, '\n', ' ')).words.toLocaleString('tr-TR')} / ${total} sözcük`;
+  }, 250);
 }
 
 // ================================================================== wiring
 
 function wireChrome() {
+  $('#qat').innerHTML = [['save', 'save', 'Kaydet (Ctrl+S)'], ['undo', 'undo', 'Geri al (Ctrl+Z)'], ['redo', 'redo', 'Yinele (Ctrl+Y)']].map(([c, i, t]) => `<button class="icon-btn" data-qat="${c}" title="${t}">${icon(i)}</button>`).join('');
+  $('#qat').onmousedown = (e) => e.preventDefault();
+  $('#qat').onclick = (e) => { const b = e.target.closest('[data-qat]'); if (b && !b.disabled) runCmd(b.dataset.qat); };
+  $('#sb-words').onclick = () => runCmd('wordCount');
+  $('#sb-theme').innerHTML = icon('theme');
+  $('#sb-theme').onclick = (e) => runCmd('themeMenu', null, e.currentTarget);
+  $('#sb-help').innerHTML = icon('key');
+  $('#sb-help').onclick = () => runCmd('shortcuts');
+  native.onContextMenu((p) => contextMenu(app, p));
   $('#btn-newtab').innerHTML = icon('plus');
   $('#btn-newtab').onclick = () => (app.tabs.length ? backstage('new') : newDocument('blank'));
   $('#btn-quick-sign').innerHTML = `${icon('sign')}<span>İmzala</span>`;
@@ -946,7 +1033,18 @@ function wireChrome() {
     if (e.key === 'F11' || (e.key === 'Escape' && document.body.classList.contains('focus-mode'))) { e.preventDefault(); runCmd('focusMode'); return; }
     if (e.key === 'Escape' && !$('#backstage').classList.contains('hidden')) { $('#backstage').classList.add('hidden'); return; }
     if (e.key === 'Escape' && !$('#findbar').classList.contains('hidden')) { closeFind(); return; }
+    if (e.key === 'Escape' && app.painter) { stopPainter(app); return; }
+    if (e.key === 'F1') { e.preventDefault(); runCmd('shortcuts'); return; }
+    if (e.key === 'F3' && e.shiftKey && app.ed()) { e.preventDefault(); runCmd('cycleCase'); return; }
     if (!mod) return;
+    if (e.shiftKey && !e.altKey && app.ed() && (k === 'c' || k === 'v') && app.ed().view.hasFocus()) {
+      e.preventDefault();
+      if (k === 'c') { app.copiedFormat = captureFormat(app.ed()); toast('Biçim kopyalandı — uygulamak için Ctrl+Shift+V', { ms: 1600 }); }
+      else if (app.copiedFormat) applyFormat(app.ed(), app.copiedFormat);
+      else runCmd('pastePlain');
+      return;
+    }
+    if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
     const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
     if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
     if (k === '=' || k === '+') { e.preventDefault(); setZoom(app.zoom + 0.1); }
@@ -999,7 +1097,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1015,6 +1113,49 @@ window.__smoke = {
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
       }
+      case 'comfort': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.chain().focus().insertContent('istanbul ili ışık').run();
+        ed.commands.setTextSelection({ from: 1, to: ed.state.doc.content.size - 1 });
+        runCmd('changeCase', 'upper');
+        const up = ed.getText();
+        runCmd('changeCase', 'title');
+        const title = ed.getText();
+        // format painter: bold first word, paint onto the last
+        ed.commands.setTextSelection({ from: 1, to: 9 });
+        ed.commands.toggleBold();
+        ed.commands.setTextSelection(3);
+        formatPainter(app);
+        const L = ed.state.doc.content.size - 1;
+        ed.commands.setTextSelection({ from: L - 4, to: L });
+        ed.view.dom.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        await wait(50);
+        const lastBold = ed.state.doc.rangeHasMark(L - 4, L, ed.schema.marks.bold);
+        const ok = up === 'İSTANBUL İLİ IŞIK' && title === 'İstanbul İli Işık' && lastBold && !app.painter;
+        return { ok, up, title, lastBold };
+      }
+      case 'ctxmenu': {
+        const ed = app.ed();
+        ed.commands.focus();
+        contextMenu(app, { x: 520, y: 420, isEditable: true, selectionText: '', misspelledWord: 'mahkme', suggestions: ['mahkeme', 'mahkum'], canCut: false, canCopy: false, canPaste: true });
+        await wait(100);
+        const n = document.querySelectorAll('.menu .mi').length;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        const left = document.querySelectorAll('.menu').length;
+        return { ok: n >= 8 && left === 0, items: n, left };
+      }
+      case 'dark': {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        app._prevTheme = app.theme;
+        await setTheme(app, 'dark');
+        ribbon.show('view');
+        await wait(300);
+        const bg = getComputedStyle(document.body).backgroundColor;
+        return { ok: bg !== 'rgb(244, 244, 245)', bg };
+      }
+      case 'theme-restore': await setTheme(app, app._prevTheme || 'system'); ribbon.show('home'); return { ok: true };
       case 'ui-insert': case 'ui-layout': case 'ui-sign': case 'ui-uyap': case 'ui-view':
         ribbon.show(step.slice(3));
         return { ok: true };
@@ -1112,7 +1253,7 @@ window.__smoke = {
 (async function boot() {
   wireChrome();
   ribbon = createRibbon(app);
-  try { app.profile = (await native.settings.get()).profile || {}; } catch {}
+  try { const st = await native.settings.get(); app.profile = st.profile || {}; app.theme = st.theme || 'system'; } catch {}
   renderWelcome();
   activate(null);
 })();

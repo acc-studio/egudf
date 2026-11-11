@@ -44,6 +44,7 @@ export function modal({ title, icon: ic = 'info', body, width = 520, actions = [
   $('.x', m).onclick = () => close(null);
   if (dismissable) back.addEventListener('mousedown', (e) => { if (e.target === back) close(null); });
   const onKey = (e) => {
+    if (!back.isConnected) { document.removeEventListener('keydown', onKey, true); return; } // removed without close()
     if (e.key === 'Escape' && dismissable) { e.stopPropagation(); close(null); }
     if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'TEXTAREA' && !e.target.closest('.mini-editor')) {
       const primary = $('.modal-foot .btn.primary, .modal-foot .btn.ok', m);
@@ -81,8 +82,8 @@ export function menu(anchor, items) {
     for (const it of items) {
       if (it.sep) { m.append(h('<div class="msep"></div>')); continue; }
       if (it.header) { m.append(h(`<div class="mh">${esc(it.header)}</div>`)); continue; }
-      const el = h(`<div class="mi ${it.checked ? 'checked' : ''}">${it.icon ? icon(it.icon) : ''}<span>${it.html || esc(it.label)}</span></div>`);
-      el.onclick = () => { closeMenu(); it.onClick?.(); };
+      const el = h(`<div class="mi ${it.checked ? 'checked' : ''} ${it.disabled ? 'disabled' : ''}">${it.icon ? icon(it.icon) : '<span class="ic-pad"></span>'}<span>${it.html || esc(it.label)}</span>${it.kbd ? `<kbd class="mk">${esc(it.kbd)}</kbd>` : ''}</div>`);
+      el.onclick = () => { if (it.disabled) return; closeMenu(); it.onClick?.(); };
       m.append(el);
     }
   }

@@ -2,7 +2,7 @@
 // File IO, dialogs, e-imza (PKCS#11, CAdES-BES) and the UYAP Avukat Portal
 // window. Documents never leave the machine except through the user's own
 // actions inside the UYAP portal window.
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, clipboard, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -53,13 +53,15 @@ function writeSettings(patch) {
 
 // ------------------------------------------------------------------ window
 function createWindow() {
+  const theme = readSettings().theme;
+  if (['light', 'dark', 'system'].includes(theme)) nativeTheme.themeSource = theme;
   win = new BrowserWindow({
     width: 1440,
     height: 940,
     minWidth: 900,
     minHeight: 600,
     title: 'egUDF',
-    backgroundColor: '#f4f4f5',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1d1d20' : '#f4f4f5',
     autoHideMenuBar: true,
     show: SMOKE == null,
     icon: path.join(__dirname, 'build', 'icon.png'),
@@ -102,7 +104,17 @@ function setupSpellcheck(ses) {
   } catch { /* macOS: language choice is automatic */ }
 }
 
+// The main window draws its own context menu (spelling + table + review
+// actions); everything else (UYAP window) keeps the native one.
 function contextMenu(w, p) {
+  if (w === win && !w.isDestroyed()) {
+    w.webContents.send('context-menu', {
+      x: p.x, y: p.y, isEditable: p.isEditable, selectionText: p.selectionText,
+      misspelledWord: p.misspelledWord, suggestions: (p.dictionarySuggestions || []).slice(0, 6),
+      canCut: p.editFlags.canCut, canCopy: p.editFlags.canCopy, canPaste: p.editFlags.canPaste,
+    });
+    return;
+  }
   const items = [];
   if (p.misspelledWord) {
     for (const s of p.dictionarySuggestions.slice(0, 6)) items.push({ label: s, click: () => w.webContents.replaceMisspelling(s) });
@@ -189,6 +201,20 @@ ipcMain.handle('shell:showInFolder', (_e, p) => shell.showItemInFolder(p));
 ipcMain.on('app:close-ok', () => { allowClose = true; win?.close(); });
 ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, smoke: SMOKE != null }));
 ipcMain.handle('clipboard:writeText', (_e, t) => clipboard.writeText(String(t)));
+ipcMain.handle('clipboard:readText', () => clipboard.readText());
+ipcMain.handle('edit:do', (e, role, arg) => {
+  const wc = e.sender;
+  if (role === 'replaceMisspelling') wc.replaceMisspelling(String(arg));
+  else if (role === 'addWord') wc.session.addWordToSpellCheckerDictionary(String(arg));
+  else if (['cut', 'copy', 'paste', 'pasteAndMatchStyle', 'selectAll'].includes(role)) wc[role]();
+});
+ipcMain.handle('theme:set', (_e, t) => {
+  if (!['light', 'dark', 'system'].includes(t)) return null;
+  nativeTheme.themeSource = t;
+  writeSettings({ theme: t });
+  win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1d1d20' : '#f4f4f5');
+  return nativeTheme.shouldUseDarkColors;
+});
 
 // egPDF interop: hand a PDF rendition to egPDF (print, annotate, combine) —
 // falls back to the system PDF viewer when egPDF isn't installed.
