@@ -69,6 +69,14 @@ const TABS = {
     group('UYAP Avukat Portal', big('uyapOpen', 'globe', 'Portalı aç') + big('uyapSend', 'upload', 'İmzala ve<br>gönder', { cls: 'accent' }) + big('uyapAttach', 'attach', 'Yükleme<br>alanına ekle')),
     group('Dosya', big('showInFolder', 'folder', 'Klasörde<br>göster') + big('uyapSettings', 'globe', 'Portal<br>adresi')),
   ],
+  review: () => [
+    group('Yorumlar', big('commentNew', 'comment', 'Yeni<br>yorum', { title: 'Yeni yorum (Ctrl+Alt+M)' }) + col(
+      btn('commentPrev', 'chevron', 'Önceki yorum', { label: 'Önceki', cls: 'flip' }) + btn('commentNext', 'chevron', 'Sonraki yorum', { label: 'Sonraki' }),
+      btn('commentDelete', 'reject', 'Bu yorumu sil', { label: 'Sil' }) + btn('commentDeleteAll', 'tableDel', 'Belgedeki tüm yorumları sil', { label: 'Tümünü sil' }),
+      btn('reviewPane', 'nav', 'Gözden geçirme bölmesi', { label: 'Bölmeyi göster' }),
+    )),
+    group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' })),
+  ],
   view: () => [
     group('Göster', big('toggleNav', 'nav', 'Gezinti<br>bölmesi', { id: 'rb-nav' }) + big('marks', 'pilcrow', 'Biçim<br>işaretleri', { id: 'rb-marks' }) + big('focusMode', 'focus', 'Odak<br>modu')),
     group('Tema', big('theme', 'monitor', 'Sistem', { arg: 'system', title: 'Windows temasını izle' }) + big('theme', 'sun', 'Açık', { arg: 'light' }) + big('theme', 'theme', 'Koyu', { arg: 'dark' })),
@@ -90,7 +98,7 @@ const TABS = {
   ],
 };
 
-const TAB_LABELS = [['file', 'Dosya'], ['home', 'Giriş'], ['insert', 'Ekle'], ['layout', 'Düzen'], ['sign', 'İmza'], ['uyap', 'UYAP'], ['view', 'Görünüm']];
+const TAB_LABELS = [['file', 'Dosya'], ['home', 'Giriş'], ['insert', 'Ekle'], ['layout', 'Düzen'], ['review', 'Gözden Geçir'], ['sign', 'İmza'], ['uyap', 'UYAP'], ['view', 'Görünüm']];
 
 export function createRibbon(app) {
   const head = $('#ribbon-tabs');
@@ -156,6 +164,8 @@ export function createRibbon(app) {
         case 'marks': on = document.body.classList.contains('show-marks'); break;
         case 'theme': on = (app.theme || 'system') === a; break;
         case 'formatPainter': on = !!app.painter; break;
+        case 'reviewPane': on = !$('#review-pane').classList.contains('hidden'); break;
+        case 'spellcheck': on = app.spell !== false; break;
         case 'toggleNav': on = !$('#nav-pane').classList.contains('hidden'); break;
         case 'pageNumbers': on = !!app.tab()?.meta.footer?.attrs?.['pageNumber-spec']; break;
         default:

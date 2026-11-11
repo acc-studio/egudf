@@ -43,3 +43,29 @@ change is committed and pushed, and an installer
   list. Ctrl+Space clears character formatting.
 - **Fixes:** cut/copy/paste ribbon buttons now really work (Chromium blocked
   the old method), and the ribbon keeps one height on every tab.
+
+## 0.3.0: Comments and the Gözden Geçir tab (iteration 2)
+
+- **New "Gözden Geçir" ribbon tab:** Yeni yorum, Önceki/Sonraki, Sil,
+  Tümünü sil, review pane, spell-check on/off.
+- **Comments:** select text (or put the cursor in a word) and press
+  Ctrl+Alt+M, the button, or right-click → Yeni yorum. The text is
+  highlighted, and a card opens in the review pane on the right.
+  - Enter saves; Shift+Enter adds a new line; Esc cancels an empty comment.
+  - Double-click a comment to edit it.
+  - Each card has a reply box, Çözüldü (resolved comments turn grey and
+    their highlight fades), and delete.
+  - The card for the comment under the cursor is highlighted, and clicking
+    a card jumps to its text.
+  - Author is the name in Avukat bilgilerim, otherwise "Ben".
+- **Comments never reach UYAP:** content.xml stays exactly as before.
+  Comments are stored in a separate entry inside the .udf zip
+  (`egudf/review.json`). If the file is changed outside egUDF, the comments
+  are kept but marked "metin bulunamadı".
+  - **Signed documents:** adding a comment does not break an existing
+    e-signature. content.xml and sign.sgn are written back unchanged, which
+    the smoke test checks against a real signed file.
+  - **Signing removes comments:** before signing you are warned that the
+    signed file is saved without comments, and they are removed. Filed
+    documents never carry review data.
+- **Spell-check toggle:** Gözden Geçir → Yazım denetimi (remembered).

@@ -10,6 +10,7 @@ import {
   LegalKeys, UdfCommands, ListLabels, Search,
 } from './extensions.js';
 import { Pagination } from './pagination.js';
+import { CommentMark } from '../review/comments.js';
 
 export function baseExtensions() {
   return [
@@ -44,6 +45,7 @@ export function baseExtensions() {
     UdfTableCell,
     UdfCommands,
     ListLabels,
+    CommentMark,
   ];
 }
 

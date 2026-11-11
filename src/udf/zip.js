@@ -28,12 +28,13 @@ export function readUdf(bytes) {
   };
 }
 
-/** writeUdf({ contentXml (string|Uint8Array), sign?, docProps? }) → Uint8Array */
-export function writeUdf({ contentXml, sign = null, docProps = null }) {
+/** writeUdf({ contentXml (string|Uint8Array), sign?, docProps?, extra? }) → Uint8Array */
+export function writeUdf({ contentXml, sign = null, docProps = null, extra = {} }) {
   const entries = {};
   if (docProps) entries['documentproperties.xml'] = [docProps, { level: 6 }];
   entries['content.xml'] = [typeof contentXml === 'string' ? strToU8(contentXml) : contentXml, { level: 6 }];
   if (sign) entries['sign.sgn'] = [sign, { level: 6 }];
+  for (const [k, v] of Object.entries(extra || {})) entries[k] = [v, { level: 6 }];
   return zipSync(entries);
 }
 

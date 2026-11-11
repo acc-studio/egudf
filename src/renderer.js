@@ -11,6 +11,9 @@ import { icon } from './icons.js';
 import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate } from './ui.js';
 import { createRibbon, PARA_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
+import { commentsAt } from './review/comments.js';
+import { readReview, reviewEntries } from './review/store.js';
+import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, reviewState } from './review/pane.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -79,19 +82,20 @@ function applyZoom(tab) {
   box.style.height = `${tab.sheet.offsetHeight * app.zoom}px`;
 }
 
-function newTab({ title, path = null, doc, meta, original = null, sig = null }) {
+function newTab({ title, path = null, doc, meta, original = null, sig = null, review = null }) {
   const host = h(`<div class="doc-host"><div class="zoom-box"><div class="sheet"><div class="page-overlay"></div><div class="mount"></div></div></div></div>`);
   $('#doc-area').append(host);
-  const tab = { id: ++seq, title, path, meta, host, sheet: $('.sheet', host), overlay: $('.page-overlay', host), dirty: false, original, sig, pages: 1 };
+  const tab = { id: ++seq, title, path, meta, host, sheet: $('.sheet', host), overlay: $('.page-overlay', host), dirty: false, reviewDirty: false, original, sig, review: review || { comments: [] }, pages: 1 };
   tab.geom = geometry(meta);
   tab.editor = createEditor({
     element: $('.mount', host),
     content: doc,
     getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet }),
     onLayout: (L) => drawOverlay(tab, L),
-    onUpdate: () => onDocChange(tab),
+    onUpdate: (_e, tr) => onDocChange(tab, tr),
     onSelection: () => { if (tab === app.active) scheduleUI(); },
   });
+  if (app.spell === false) tab.editor.view.dom.setAttribute('spellcheck', 'false');
   applyGeometry(tab);
   new ResizeObserver(() => applyZoom(tab)).observe(tab.sheet);
   app.tabs.push(tab);
@@ -116,8 +120,11 @@ function activate(tab) {
     renderWelcome();
   }
   refreshNav();
+  renderReview(app);
   scheduleUI();
 }
+
+const isDirty = (t) => t.dirty || t.reviewDirty;
 
 function renderTabs() {
   const el = $('#tabs');
@@ -126,7 +133,7 @@ function renderTabs() {
     const sigCls = t.sig ? (t.sig.state === 'valid' ? '' : t.sig.state === 'stale' ? 'stale' : 'invalid') : null;
     const b = h(`<div class="tab ${t === app.active ? 'active' : ''}" title="${esc(t.path || t.title)}">
       ${sigCls !== null ? `<span title="${t.sig.state === 'valid' ? 'İmzalı' : 'İmza geçersiz'}">${icon('verify', `tab-sig ${sigCls}`)}</span>` : ''}
-      <span class="tab-title">${esc(t.title)}</span>${t.dirty ? '<span class="tab-dirty">●</span>' : ''}
+      <span class="tab-title">${esc(t.title)}</span>${isDirty(t) ? '<span class="tab-dirty">●</span>' : ''}
       <button class="tab-close" title="Kapat (Ctrl+W)">✕</button></div>`);
     b.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } };
     b.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t); else activate(t); };
@@ -135,7 +142,7 @@ function renderTabs() {
 }
 
 async function closeTab(tab) {
-  if (tab.dirty) {
+  if (isDirty(tab)) {
     const r = await confirmBox({ title: 'Kaydedilmemiş değişiklikler', text: `<b>${esc(tab.title)}</b> belgesindeki değişiklikler kaydedilsin mi?`, ok: 'Kaydet', cancel: 'İptal', extra: { label: 'Kaydetme', value: 'discard', kind: 'danger' } });
     if (r === false || r === null) return false;
     if (r === true && !(await save(tab))) return false;
@@ -180,7 +187,12 @@ function drawOverlay(tab, L) {
 
 // ================================================================== documents
 
-function onDocChange(tab) {
+function onDocChange(tab, tr) {
+  if (tr?.getMeta('reviewOnly')) { // comment anchors only: content.xml (and a signature) unaffected
+    if (!tab.reviewDirty) { tab.reviewDirty = true; renderTabs(); }
+    renderReview(app);
+    return;
+  }
   if (!tab.dirty) { tab.dirty = true; renderTabs(); }
   if (tab.sig?.state === 'valid') {
     tab.sig.state = 'stale';
@@ -188,8 +200,12 @@ function onDocChange(tab) {
     toast('Belge imzadan sonra değişti: kaydederken mevcut imza kaldırılacak. Göndermeden önce yeniden imzalayın.', { type: 'warn', ms: 6500 });
   }
   scheduleNav();
+  scheduleReview();
   scheduleUI();
 }
+
+let reviewTimer = null;
+function scheduleReview() { clearTimeout(reviewTimer); reviewTimer = setTimeout(() => renderReview(app), 200); }
 
 const baseName = (p) => p.split(/[\\/]/).pop().replace(/\.udf$/i, '');
 
@@ -209,13 +225,19 @@ async function openPath(path) {
 async function openBytes(bytes, { path, title }) {
   const u = readUdf(bytes);
   // UYAP-generated forms (takip talebi…) may hold placeholders + a <data> payload: show them merged.
-  const { doc, meta } = parseUdfXml(mergeTemplateData(u.contentText).xml);
+  const parsed = parseUdfXml(mergeTemplateData(u.contentText).xml);
+  const { meta } = parsed;
+  let { doc } = parsed;
+  const review = await readReview(u.other, u.contentXml);
+  if (review?.doc) doc = review.doc;
   let sig = null;
   if (u.sign) {
     const v = await native.sign.verify({ sign: u.sign, content: u.contentXml });
     sig = { state: v.ok && v.valid ? 'valid' : 'invalid', info: v.ok ? v : { error: v.error } };
   }
-  const tab = newTab({ title, path, doc, meta, original: { contentXml: u.contentXml, docProps: u.docProps, sign: u.sign, bytes }, sig });
+  const tab = newTab({ title, path, doc, meta, original: { contentXml: u.contentXml, docProps: u.docProps, sign: u.sign, bytes }, sig, review: review ? { comments: review.comments } : null });
+  if (review?.stale) toast('Belge egUDF dışında değiştirilmiş: yorum ve değişiklik işaretleri metne bağlanamadı.', { type: 'warn', ms: 6000 });
+  if (review?.comments.length) showPane(app, true);
   if (sig?.state === 'valid') toast(`İmzalı belge · ${sig.info.signer?.subjectCN || ''} · ${fmtDate(sig.info.signingTime)}`, { type: 'ok' });
   if (sig?.state === 'invalid') toast('Belgedeki imza doğrulanamadı.', { type: 'bad', actions: [{ label: 'Ayrıntı', onClick: () => signatureInfo(app, tab) }] });
   return tab;
@@ -243,14 +265,21 @@ async function save(tab, { as = false } = {}) {
     if (!path) return false;
   }
   let bytes;
-  if (!tab.dirty && tab.original?.bytes) {
+  const docJson = tab.editor.getJSON();
+  if (!tab.dirty && !tab.reviewDirty && tab.original?.bytes) {
     bytes = tab.original.bytes; // unchanged: keep the file byte-for-byte (signature intact)
+  } else if (!tab.dirty && tab.original?.contentXml) {
+    // only comments changed: same content.xml, same signature, new review entry
+    const o = tab.original;
+    bytes = writeUdf({ contentXml: o.contentXml, sign: o.sign, docProps: o.docProps, extra: await reviewEntries(tab, docJson, o.contentXml) });
+    tab.original = { ...o, bytes };
   } else {
     const xml = contentBytes(tab);
-    bytes = writeUdf({ contentXml: xml });
+    bytes = writeUdf({ contentXml: xml, extra: await reviewEntries(tab, docJson, xml) });
     tab.original = { contentXml: xml, bytes };
     if (tab.sig) tab.sig = null; // old signature no longer matches
   }
+  tab.reviewDirty = false;
   await native.writeFile(path, bytes);
   tab.path = path;
   tab.title = baseName(path);
@@ -279,12 +308,24 @@ app.signTab = async (tab, req) => {
   tab.dirty = false;
   tab.original = { contentXml: xml, sign: r.sgn, bytes };
   tab.sig = { state: 'valid', info: r.verification };
+  stripReview(tab); // the signed file carries no review data
   addRecent(path, tab.title);
   renderTabs();
   scheduleUI();
   toast(`İmzalandı ve kaydedildi · ${r.signer.subjectCN}`, { type: 'ok', actions: [{ label: 'UYAP\'a gönder', onClick: () => uyapSendFlow(app, tab) }] });
   return { ok: true };
 };
+
+/** Removes comments (marks + threads) after signing: the filed document is final. */
+function stripReview(tab) {
+  if (!tab.review?.comments.length) return;
+  const ed = tab.editor;
+  const tr = ed.state.tr.removeMark(0, ed.state.doc.content.size, ed.schema.marks.comment).setMeta('reviewOnly', true).setMeta('addToHistory', false);
+  ed.view.dispatch(tr);
+  tab.review.comments = [];
+  tab.reviewDirty = false;
+  renderReview(app);
+}
 
 async function loadFont(name) { return native.bundledFont(name); }
 
@@ -686,6 +727,20 @@ async function runCmd(name, arg, el) {
     case 'pastePlain': ed?.commands.focus(); native.edit('pasteAndMatchStyle'); return;
     case 'selectAll': chain().selectAll().run(); return;
     case 'wordCount': wordCountDialog(app); return;
+    case 'commentNew': addComment(app); return;
+    case 'commentDelete': { const ids = tab ? commentsAt(ed.state) : []; if (ids.length) ids.forEach((id) => deleteComment(app, id)); else toast('İmleç bir yorumun üzerinde değil.'); return; }
+    case 'commentDeleteAll': deleteAllComments(app); return;
+    case 'commentPrev': stepComment(app, -1); return;
+    case 'commentNext': stepComment(app, 1); return;
+    case 'reviewPane': showPane(app, $('#review-pane').classList.contains('hidden')); return;
+    case 'spellcheck': {
+      app.spell = !app.spell;
+      localStorage.setItem('udf.spell', app.spell ? '1' : '0');
+      for (const t of app.tabs) t.editor.view.dom.setAttribute('spellcheck', String(app.spell));
+      toast(app.spell ? 'Yazım denetimi açık' : 'Yazım denetimi kapalı', { ms: 1400 });
+      scheduleUI();
+      return;
+    }
     case 'shortcuts': shortcutsDialog(); return;
     case 'themeMenu': themeMenu(app, el); return;
     case 'theme': setTheme(app, arg); return;
@@ -758,6 +813,7 @@ async function runCmd(name, arg, el) {
     // ---- sign / uyap
     case 'sign':
       if (!tab) return;
+      if (tab.review?.comments.length && !(await confirmBox({ title: 'Yorumlar imzalanmaz', text: `Belgede ${tab.review.comments.length} yorum var. İmzalı dosya yorumsuz kaydedilir ve yorumlar belgeden kaldırılır.`, ok: 'Devam et', icon: 'comment' }))) return;
       if (tab.sig?.state === 'valid' && !tab.dirty && !(await confirmBox({ title: 'Belge zaten imzalı', text: 'Mevcut imza yeni imzayla değiştirilecek. Devam edilsin mi?', ok: 'Yeniden imzala', kind: 'ok', icon: 'sign' }))) return;
       signDialog(app, tab);
       return;
@@ -927,8 +983,11 @@ function wordCount(tab) {
 }
 let wcTimer = null;
 
+let lastSel = null;
 function refreshUI() {
   ribbon?.refresh();
+  const sel = app.active ? `${app.active.id}:${app.active.editor.state.selection.from}` : null;
+  if (sel !== lastSel) { lastSel = sel; renderReview(app); }
   const tab = app.active;
   const pill = $('#sig-pill'), sb = $('#sb-sig');
   $('#btn-quick-sign').disabled = !tab;
@@ -979,6 +1038,12 @@ function wireChrome() {
   $('#sb-help').innerHTML = icon('key');
   $('#sb-help').onclick = () => runCmd('shortcuts');
   native.onContextMenu((p) => contextMenu(app, p));
+  wireReviewPane(app);
+  app.contextExtras.push((ed) => {
+    const ids = commentsAt(ed.state);
+    return [{ label: 'Yeni yorum', icon: 'comment', kbd: 'Ctrl+Alt+M', onClick: () => runCmd('commentNew') }, ...(ids.length ? [{ label: 'Yorumu sil', icon: 'reject', onClick: () => runCmd('commentDelete') }] : [])];
+  });
+  app.spell = localStorage.getItem('udf.spell') !== '0';
   $('#btn-newtab').innerHTML = icon('plus');
   $('#btn-newtab').onclick = () => (app.tabs.length ? backstage('new') : newDocument('blank'));
   $('#btn-quick-sign').innerHTML = `${icon('sign')}<span>İmzala</span>`;
@@ -1045,6 +1110,7 @@ function wireChrome() {
       return;
     }
     if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
+    if (e.altKey && k === 'm' && app.ed()) { e.preventDefault(); runCmd('commentNew'); return; }
     const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
     if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
     if (k === '=' || k === '+') { e.preventDefault(); setZoom(app.zoom + 0.1); }
@@ -1084,7 +1150,7 @@ function wireChrome() {
   native.onOpenPaths(async (paths) => { $('#backstage').classList.add('hidden'); for (const p of paths) await openPath(p); });
   native.onToast((msg, path) => toast(msg, { type: 'ok', actions: path ? [{ label: 'Klasörde göster', onClick: () => native.showInFolder(path) }] : [] }));
   native.onBeforeClose(async () => {
-    const dirty = app.tabs.filter((t) => t.dirty);
+    const dirty = app.tabs.filter(isDirty);
     if (!dirty.length) { native.closeOk(); return; }
     const r = await confirmBox({ title: 'Kaydedilmemiş değişiklikler', text: `${dirty.map((t) => `<b>${esc(t.title)}</b>`).join(', ')} kaydedilmedi.`, ok: 'Kaydet ve çık', extra: { label: 'Kaydetmeden çık', value: 'discard', kind: 'danger' } });
     if (r === 'discard') { native.closeOk(); return; }
@@ -1097,7 +1163,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1112,6 +1178,59 @@ window.__smoke = {
         await wait(300);
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'comments': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.chain().focus().insertContent('Davacı vekili olarak beyan ederiz.').run();
+        ed.commands.setTextSelection({ from: 1, to: 14 });
+        addComment(app);
+        await wait(80);
+        const ta = document.querySelector('.rv-card textarea.rv-edit');
+        ta.value = 'Müvekkil adını ekle';
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await wait(50);
+        const rep = document.querySelector('.rv-card textarea.rv-reply');
+        rep.value = 'Tamam';
+        rep.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await wait(50);
+        const p = `${out}${sep}comments.udf`;
+        t.path = p;
+        await save(t);
+        const bytes = await native.readFile(p);
+        const u = readUdf(bytes);
+        const plain = !u.contentText.includes('comment') && u.contentText.includes('Davacı vekili');
+        t.dirty = false;
+        await closeTab(t);
+        const t2 = await openPath(p);
+        await wait(300);
+        const c = t2.review.comments[0];
+        const anchored = !!document.querySelector('.udf-doc [data-comment]');
+        await wait(200);
+        return { ok: plain && c?.text === 'Müvekkil adını ekle' && c.replies.length === 1 && anchored && !!u.other['egudf/review.json'], plain, anchored, text: c?.text };
+      }
+      case 'comment-signed': {
+        const t = app.tabs.find((x) => x.sig?.state === 'valid' && x.path);
+        if (!t) return { ok: true, skipped: true };
+        activate(t);
+        await wait(300);
+        t.editor.commands.setTextSelection(30);
+        addComment(app);
+        await wait(50);
+        const ta = document.querySelector('.rv-card textarea.rv-edit');
+        ta.value = 'İmzalı belgeye not';
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const orig = t.path;
+        const p = `${out}${sep}signed-commented.udf`;
+        t.path = p;
+        const before = t.original.contentXml;
+        await save(t);
+        const u = readUdf(await native.readFile(p));
+        const v = await native.sign.verify({ sign: u.sign, content: u.contentXml });
+        const same = u.contentXml.length === before.length && u.contentXml.every((b, i) => b === before[i]);
+        t.path = orig;
+        return { ok: same && v.ok && v.valid && t.sig?.state === 'valid' && !t.dirty, same, valid: v.valid };
       }
       case 'comfort': {
         const t = newDocument('blank');
