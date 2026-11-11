@@ -83,6 +83,7 @@ const P = {
   tableDel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9l8 8M16 9l-8 8"/>',
   merge: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 12h8M14 10l2 2-2 2M10 10l-2 2 2 2"/>',
   border: '<rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="3 2"/><path d="M3 12h18M12 3v18"/>',
+  compare: '<rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/><path d="M5 8h3M5 11h3M16 8h3M16 11h1M16 14h3"/>',
   sort: '<path d="M7 4v16M4 17l3 3 3-3M14 6h7M14 11h5M14 16h3"/>',
   select: '<path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M10 4h4M10 20h4M4 10v4M20 10v4"/>',
   distribute: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14M5 12h2M17 12h2M11 12h2"/>',

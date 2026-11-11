@@ -174,6 +174,9 @@ body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar {
 #sb-page { cursor: pointer; }
 #sb-lang { cursor: pointer; }
 #sb-collab { color: var(--accent); }
+.cmp-row { display: flex; gap: 8px; align-items: center; }
+.cmp-row select { flex: 1; }
+.cmp-file { font-size: 12px; color: var(--text-dim); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sb-collab.peers { color: var(--ok, #2e7d32); font-weight: 600; }
 .udf-doc .peer-flag { position: absolute; margin-left: calc(-46px - var(--peer-off, 0px)); margin-top: 1px; min-width: 22px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--peer); color: #fff; font: 600 10px/18px "Segoe UI", sans-serif; text-align: center; text-indent: 0; user-select: none; pointer-events: auto; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 .udf-doc .peer-here { box-shadow: -8px 0 0 -5px var(--peer); }

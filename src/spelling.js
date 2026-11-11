@@ -122,7 +122,14 @@ export async function spellDialog(app) {
     const off = $p.parentOffset;
     const a = Math.max(0, off - 50), b = Math.min(para.length, off + e.word.length + 50);
     $('#sp-ctx', body).innerHTML = `${a > 0 ? '…' : ''}${esc(para.slice(a, off))}<mark>${esc(para.slice(off, off + e.word.length))}</mark>${esc(para.slice(off + e.word.length, b))}${b < para.length ? '…' : ''}`;
+    // until the suggestions arrive, Değiştir must not use the previous word's text
+    const btns = [...body.querySelectorAll('[data-a="change"], [data-a="changeAll"]')];
+    btns.forEach((x) => { x.disabled = true; });
+    $('#sp-to', body).value = e.word;
+    $('#sp-list', body).innerHTML = '<div class="dim">Öneriler aranıyor…</div>';
     const sugg = (await native.spell.suggest(e.word)) || [];
+    if (cur !== e) return; // moved on meanwhile
+    btns.forEach((x) => { x.disabled = false; });
     $('#sp-list', body).innerHTML = sugg.length ? sugg.map((s, i) => `<div class="sp-s ${i ? '' : 'sel'}">${esc(s)}</div>`).join('') : '<div class="dim">(öneri yok)</div>';
     $('#sp-to', body).value = sugg[0] || e.word;
     const n = st.errors.length;
@@ -135,22 +142,23 @@ export async function spellDialog(app) {
     if (!act || !cur) return;
     const e = cur;
     const to = $('#sp-to', body).value;
-    if (act === 'ignore') { skipped.add(`${e.from}:${e.word}`); await show(next(e.to)); return; }
-    if (act === 'ignoreAll') { st.ignore.add(e.word); await show(next(e.from)); return; }
-    if (act === 'add') { await native.spell.add(e.word); app.spellCache.set(e.word, false); await show(next(e.from)); return; }
-    if (act === 'change') { replaceWord(ed, e, to); await show(next(e.from + to.length)); return; }
+    if (act === 'ignore') { skipped.add(`${e.from}:${e.word}`); await (api.ready = show(next(e.to))); return; }
+    if (act === 'ignoreAll') { st.ignore.add(e.word); await (api.ready = show(next(e.from))); return; }
+    if (act === 'add') { await native.spell.add(e.word); app.spellCache.set(e.word, false); await (api.ready = show(next(e.from))); return; }
+    if (act === 'change') { replaceWord(ed, e, to); await (api.ready = show(next(e.from + to.length))); return; }
     if (act === 'changeAll') {
       const all = st.errors.filter((x) => x.word === e.word).sort((x, y) => y.from - x.from);
       ed.chain().focus().command(({ tr }) => { for (const x of all) tr.insertText(to, x.from, x.to); return true; }).run();
       toast(`${all.length} yer değiştirildi`, { ms: 1500 });
-      await show(next(e.from));
+      await (api.ready = show(next(e.from)));
     }
   });
   $('#sp-list', body).addEventListener('dblclick', (ev) => { if (ev.target.closest('.sp-s')) body.querySelector('[data-a="change"]').click(); });
   $('#sp-to', body).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); body.querySelector('[data-a="change"]').click(); } });
   modal({ title: 'Yazım denetimi', icon: 'spell', body, width: 560, actions: [{ label: 'Kapat' }] });
   const first = show(next(ed.state.selection.from));
-  app.spellDialogApi = { show, next, get current() { return cur; }, body, ready: first };
+  const api = { show, next, get current() { return cur; }, body, ready: first };
+  app.spellDialogApi = api;
 }
 
 export async function spellLangMenu(app, el) {

@@ -352,3 +352,40 @@ egUDF shows when someone else already has the file open).
   - presence;
   - conflict-copy merge.
   - Not tested: two real PCs on real OneDrive. That needs a second person.
+
+## 0.13.0: Compare documents (iteration 12)
+
+After the requested list, I asked what the most useful Word feature egUDF
+still lacked. For a lawyer that is **Compare**: the other side sends back
+"their version" of a contract or petition without tracked changes, and
+you need a redline.
+
+- **Gözden Geçir → Karşılaştır:**
+  - Pick the original and the revised version: any open tab, or a .udf or
+    Word (.docx) file. Enter who made the changes ("Av. Karşı Taraf").
+  - The result opens in a new tab: the revised text, with every difference
+    as a tracked change by that person.
+  - Changes are word by word: "her ayın ~~beşinci~~ onuncu günü".
+  - Whole paragraphs added or removed are marked as such.
+  - Formatting differences (bold, size…) and paragraph differences
+    (alignment, indents, lists) show as formatting changes.
+  - Tables of the same shape are compared cell by cell.
+- **What you can do with the result:**
+  - Review it with Kabul et / Reddet, the review pane and next/previous.
+  - "Tümünü kabul et" gives exactly the revised document; "Tümünü reddet"
+    gives the original.
+  - Save it as .udf (the redline stays as review data), or export to Word,
+    where it arrives as real Word tracked changes.
+- **Fixes found along the way:**
+  - Accepting the deletion of a whole paragraph (or rejecting its
+    insertion) now removes the paragraph too, instead of leaving an empty
+    line. Word does the same.
+  - F7 spelling dialog: Değiştir is disabled for the quarter second while
+    suggestions load. Before, a fast click could insert the previous word's
+    suggestion.
+- **Testing:**
+  - Unit tests for word-level, paragraph-level and formatting differences.
+  - All 23 real UDFs in Downloads: compared with themselves → 0 changes;
+    with one paragraph removed → exactly 1 deletion.
+  - Smoke step `compare` drives the dialog and checks the accept-all and
+    reject-all round trips.

@@ -317,10 +317,28 @@ export function resolveChanges(ed, from, to, accept, { kinds = null, paragraphs 
     return false;
   });
   count += ranges.length;
+  // paragraphs that consist only of text being removed go away with it (Word removes the paragraph mark too)
+  const gone = accept ? 'deletion' : 'insertion';
+  const whole = [];
+  state.doc.nodesBetween(from, to, (n, pos) => {
+    if (n.type.name !== 'paragraph') return true;
+    if (n.childCount && pos >= from - 1 && pos + n.nodeSize <= to + 1 && (!kinds || kinds.includes(gone))) {
+      let all = true;
+      n.forEach((c) => { if (!c.marks.some((m) => m.type.name === gone)) all = false; });
+      if (all) whole.push(pos);
+    }
+    return false;
+  });
   for (const r of ranges.reverse()) {
     const removeText = (r.kind === 'insertion') !== accept; // reject insertion / accept deletion
     if (removeText) tr.delete(tr.mapping.map(r.a), tr.mapping.map(r.b));
     else tr.removeMark(tr.mapping.map(r.a), tr.mapping.map(r.b), state.schema.marks[r.kind]);
+  }
+  for (const p of whole.reverse()) {
+    const pos = tr.mapping.map(p);
+    const n = tr.doc.nodeAt(pos);
+    // keep at least one block in the document / cell
+    if (n?.type.name === 'paragraph' && !n.childCount && tr.doc.resolve(pos).parent.childCount > 1) tr.delete(pos, pos + n.nodeSize);
   }
   if (tr.docChanged) ed.view.dispatch(tr);
   return count;

@@ -80,6 +80,7 @@ const TABS = {
       btn('markup', 'pilcrow', 'Tüm işaretleri göster', { arg: 'all', label: 'Tüm işaretler' }),
       btn('markup', 'page', 'Değişiklikleri kabul edilmiş gibi göster', { arg: 'none', label: 'İşaretsiz' }),
     )),
+    group('Karşılaştır', big('compareDialog', 'compare', 'Karşılaştır', { title: 'İki sürümü karşılaştır: farklar değişiklik olarak gösterilir' })),
     group('Değişiklikler', `<span class="split vsplit">${big('acceptChange', 'accept', 'Kabul et', { cls: 'okc' })}<button class="rb" data-cmd="acceptMenu" title="Kabul seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + `<span class="split vsplit">${big('rejectChange', 'reject', 'Reddet', { cls: 'badc' })}<button class="rb" data-cmd="rejectMenu" title="Ret seçenekleri">${icon('chevron', 'caret')}</button></span>`
       + col(btn('changePrev', 'chevron', 'Önceki değişiklik', { label: 'Önceki', cls: 'flip' }), btn('changeNext', 'chevron', 'Sonraki değişiklik', { label: 'Sonraki' }))),

@@ -18,6 +18,7 @@ import { changeList, changesAt, resolveChanges, resolveAll, resolveItems, setTra
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
 import { createCollab } from './collab/live.js';
+import { compareDocs } from './review/compare.js';
 import { setupSpell, applySpellSettings, spellDialog, spellLangMenu, dictionaryDialog, spellMenuItems, restoreSpellLangs, spellAvailable, settle } from './spelling.js';
 import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from './udf/pagenum.js';
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
@@ -249,6 +250,69 @@ async function openPath(path) {
     removeRecent(path);
     return null;
   }
+}
+
+// ================================================================== compare
+
+/** A document to compare: an open tab or a .udf/.docx file. → { doc, meta, name } */
+async function loadForCompare(src) {
+  if (src.tab) return { doc: src.tab.editor.getJSON(), meta: src.tab.meta, name: src.tab.title };
+  const bytes = await native.readFile(src.path);
+  const name = src.path.split(/[\\/]/).pop().replace(/\.(udf|docx)$/i, '');
+  if (/\.docx$/i.test(src.path)) { const r = importDocx(bytes); return { doc: r.doc, meta: r.meta, name }; }
+  const r = await parseUdfBytes(bytes);
+  return { doc: r.doc, meta: r.meta, name };
+}
+
+async function runCompare(a, b, author) {
+  const A = await loadForCompare(a), B = await loadForCompare(b);
+  const { doc, stats } = compareDocs(A.doc, B.doc, { author: author || 'Karşılaştırma' });
+  const meta = JSON.parse(JSON.stringify(B.meta || newDocMeta()));
+  const t = newTab({ title: `Karşılaştırma – ${A.name} ↔ ${B.name}`, doc, meta });
+  t.dirty = true;
+  t.compared = { a: A.name, b: B.name, stats };
+  renderTabs();
+  showPane(app, true);
+  const n = stats.insertions + stats.deletions + stats.formats;
+  toast(n ? `${stats.insertions} ekleme, ${stats.deletions} silme, ${stats.formats} biçim farkı bulundu. Kabul et / Reddet ile gözden geçirin.` : 'İki belge aynı: fark bulunamadı.', { type: n ? 'ok' : 'warn', ms: 6000 });
+  return t;
+}
+
+function compareDialog() {
+  const cur = app.tab();
+  const tabs = app.tabs.filter((t) => !t.compared);
+  const opts = (sel) => tabs.map((t) => `<option value="tab:${t.id}" ${t === sel ? 'selected' : ''}>${esc(t.title)} (açık belge)</option>`).join('') + '<option value="file">Dosya seç…</option>';
+  const body = h(`<div>
+    <p class="note" style="margin-top:0">Karşı tarafın düzelttiği dilekçe veya sözleşmeyi kendi sürümünüzle karşılaştırın. Sonuç yeni bir sekmede açılır: eklenen ve silinen sözcükler, biçim farkları <b>değişiklik</b> olarak işaretlenir.</p>
+    <div class="field"><label>Özgün belge</label><div class="cmp-row"><select id="cmp-a">${opts(cur)}</select><span class="cmp-file" id="cmp-a-file"></span></div></div>
+    <div class="field"><label>Düzeltilmiş belge</label><div class="cmp-row"><select id="cmp-b">${opts(tabs.find((t) => t !== cur) || null)}</select><span class="cmp-file" id="cmp-b-file"></span></div></div>
+    <div class="field"><label>Değişiklikleri yapan</label><input type="text" id="cmp-who" value="Karşı taraf"></div>
+    <p class="note">.udf ve Word (.docx) belgeleri karşılaştırılabilir.</p></div>`);
+  const picked = { a: null, b: null };
+  for (const k of ['a', 'b']) {
+    const sel = $(`#cmp-${k}`, body);
+    if (k === 'b' && !tabs.find((t) => t !== cur)) sel.value = 'file';
+    sel.onchange = async () => {
+      if (sel.value !== 'file') { picked[k] = null; $(`#cmp-${k}-file`, body).textContent = ''; return; }
+      const paths = await native.openDialog();
+      if (!paths?.length) { sel.value = tabs[0] ? `tab:${tabs[0].id}` : 'file'; return; }
+      picked[k] = paths[0];
+      $(`#cmp-${k}-file`, body).textContent = paths[0].split(/[\\/]/).pop();
+      if (k === 'b') $('#cmp-who', body).value = $('#cmp-who', body).value || 'Karşı taraf';
+    };
+  }
+  const srcOf = (k) => {
+    const v = $(`#cmp-${k}`, body).value;
+    if (v === 'file') return picked[k] ? { path: picked[k] } : null;
+    return { tab: app.tabs.find((t) => `tab:${t.id}` === v) };
+  };
+  modal({ title: 'Belgeleri karşılaştır', icon: 'compare', body, width: 560, actions: [{ label: 'İptal' }, { label: 'Karşılaştır', kind: 'primary', onClick: () => {
+    const a = srcOf('a'), b = srcOf('b');
+    if (!a || !b) { toast('İki belgeyi de seçin.', { type: 'warn' }); return false; }
+    runCompare(a, b, $('#cmp-who', body).value.trim()).catch((e) => toast(`Karşılaştırılamadı: ${e.message || e}`, { type: 'bad' }));
+    return true;
+  } }] });
+  app.compareDialogBody = body;
 }
 
 /** Someone else has this file open in egUDF: offer to work together. */
@@ -1002,6 +1066,7 @@ async function runCmd(name, arg, el) {
     case 'shortcuts': shortcutsDialog(); return;
     case 'spellDialog': spellDialog(app); return;
     case 'collabToggle': await collabToggle(tab); return;
+    case 'compareDialog': compareDialog(); return;
     case 'spellLangMenu': spellLangMenu(app, el); return;
     case 'dictionary': dictionaryDialog(app); return;
     case 'themeMenu': themeMenu(app, el); return;
@@ -1639,7 +1704,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1889,14 +1954,17 @@ window.__smoke = {
         r.dialogWord = api.current?.word;
         r.suggestion = $('#sp-to').value;
         api.body.querySelector('[data-a="change"]').click();
-        await wait(300);
+        await wait(50);
+        await api.ready;
         r.afterChange = ed.state.doc.textContent.includes('vekili mahkemeye başvurdu');
         r.next = api.current?.word;
         api.body.querySelector('[data-a="ignoreAll"]').click();
-        await wait(300);
+        await wait(50);
+        await api.ready;
         r.next2 = api.current?.word;
         api.body.querySelector('[data-a="change"]').click();
-        await wait(300);
+        await wait(50);
+        await api.ready;
         r.fixed2 = ed.state.doc.textContent.includes('yalnızca');
         r.done = /tamamlandı/.test($('#sp-ctx').textContent);
         r.remaining = errs().length;
@@ -1993,6 +2061,46 @@ window.__smoke = {
         await wait(300);
         r.statusText = $('#sb-collab').textContent;
         r.ok = r.started && r.peers === 'Ayşe Yılmaz' && r.flag && r.merged1 && r.mineKept && r.pushed && r.diskHasBoth && r.conflict && r.conflictAsChange && r.plainMerged && r.plainNoConflict && r.copyOffered && r.copyMerged && r.copyGone && r.presenceCleared && /Ayşe/.test(r.statusText);
+        return r;
+      }
+      case 'compare': {
+        const P = (text, marks) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text, ...(marks ? { marks } : {}) }] });
+        const a = newDocument('blank');
+        await wait(100);
+        a.editor.commands.setContent({ type: 'doc', content: [P('KİRA SÖZLEŞMESİ'), P('Kiracı, kira bedelini her ayın beşinci günü ödeyecektir.'), P('Depozito iki aylık kira bedelidir.'), P('Sözleşme bir yıl sürelidir.')] });
+        a.title = 'Bizim sürüm';
+        const b = newDocument('blank');
+        await wait(100);
+        b.editor.commands.setContent({ type: 'doc', content: [P('KİRA SÖZLEŞMESİ', [{ type: 'bold' }]), P('Kiracı, kira bedelini her ayın onuncu günü ödeyecektir.'), P('Sözleşme bir yıl sürelidir.'), P('Kiraya veren, bakım giderlerinden sorumludur.')] });
+        b.title = 'Karşı taraf sürümü';
+        // the dialog opens and offers both tabs
+        compareDialog();
+        await wait(150);
+        const body = app.compareDialogBody;
+        const r = { options: body.querySelectorAll('#cmp-a option').length };
+        $('#cmp-a', body).value = `tab:${a.id}`;
+        $('#cmp-b', body).value = `tab:${b.id}`;
+        $('#cmp-who', body).value = 'Av. Karşı Taraf';
+        [...document.querySelectorAll('.modal button')].find((x) => x.textContent === 'Karşılaştır').click();
+        await wait(600);
+        const t = app.tab();
+        r.title = t.title;
+        r.stats = t.compared?.stats;
+        const list = changeList(t.editor.state.doc);
+        r.kinds = list.map((c) => `${c.kind}:${c.text}`);
+        r.author = list[0]?.author;
+        // accepting everything gives exactly the revised text; rejecting gives the original
+        const accepted = JSON.parse(JSON.stringify(t.editor.getJSON()));
+        resolveAll(t.editor, true);
+        r.acceptedIsRevised = docText(t.editor.getJSON()) === docText(b.editor.getJSON());
+        t.editor.commands.undo();
+        resolveAll(t.editor, false);
+        r.rejectedIsOriginal = docText(t.editor.getJSON()).replace(/\s+$/, '') === docText(a.editor.getJSON()).replace(/\s+$/, '');
+        t.editor.commands.setContent(accepted);
+        a.dirty = false; b.dirty = false;
+        renderReview(app);
+        await wait(250);
+        r.ok = r.options >= 3 && r.stats?.insertions === 2 && r.stats?.deletions === 2 && r.stats?.formats === 1 && r.author === 'Av. Karşı Taraf' && r.acceptedIsRevised && r.rejectedIsOriginal;
         return r;
       }
       case 'collab-off': {
