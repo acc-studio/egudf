@@ -17,7 +17,7 @@ const flag = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.
 const SMOKE = flag('smoke');
 const DEFAULT_UYAP_URL = 'https://avukatbeta.uyap.gov.tr/';
 
-const udfArgs = (list) => list.filter((a) => !a.startsWith('--') && /\.udf$/i.test(a) && fs.existsSync(a)).map((a) => path.resolve(a));
+const udfArgs = (list) => list.filter((a) => !a.startsWith('--') && /\.(udf|docx)$/i.test(a) && fs.existsSync(a)).map((a) => path.resolve(a));
 
 // Renamed from "UDF Editör": carry over settings, recents (localStorage) and the
 // UYAP portal session from the old userData folder on first launch.
@@ -169,7 +169,7 @@ ipcMain.handle('dialog:open', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'UYAP belgesi aç',
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'UYAP Doküman (.udf)', extensions: ['udf'] }, { name: 'Tüm dosyalar', extensions: ['*'] }],
+    filters: [{ name: 'Belgeler (.udf, .docx)', extensions: ['udf', 'docx'] }, { name: 'UYAP Doküman (.udf)', extensions: ['udf'] }, { name: 'Word belgesi (.docx)', extensions: ['docx'] }, { name: 'Tüm dosyalar', extensions: ['*'] }],
   });
   return r.canceled ? [] : r.filePaths;
 });
@@ -184,7 +184,8 @@ ipcMain.handle('file:exists', (_e, p) => fs.existsSync(p));
 ipcMain.handle('dialog:save', async (_e, { defaultPath, kind }) => {
   const filters = kind === 'pdf'
     ? [{ name: 'PDF', extensions: ['pdf'] }]
-    : [{ name: 'UYAP Doküman (.udf)', extensions: ['udf'] }];
+    : kind === 'docx' ? [{ name: 'Word belgesi (.docx)', extensions: ['docx'] }]
+      : [{ name: 'UYAP Doküman (.udf)', extensions: ['udf'] }];
   const r = await dialog.showSaveDialog(win, { defaultPath: defaultPath || app.getPath('documents'), filters });
   return r.canceled ? null : r.filePath;
 });

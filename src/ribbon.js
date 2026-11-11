@@ -89,7 +89,7 @@ const TABS = {
     group('Tema', big('theme', 'monitor', 'Sistem', { arg: 'system', title: 'Windows temasını izle' }) + big('theme', 'sun', 'Açık', { arg: 'light' }) + big('theme', 'theme', 'Koyu', { arg: 'dark' })),
     group('Yardım', big('shortcuts', 'key', 'Klavye<br>kısayolları') + big('wordCount', 'info', 'Sözcük<br>sayısı')),
     group('Yakınlaştır', big('zoom', 'zoomIn', '%100', { arg: '1' }) + big('zoomFit', 'page', 'Sayfa<br>genişliği') + big('zoom', 'zoomOut', '%75', { arg: '0.75' })),
-    group('egPDF', big('openEgpdf', 'egpdf', 'egPDF\'te<br>aç') + big('exportPdf', 'pdf', 'PDF olarak<br>kaydet')),
+    group('Dışa aktar', big('exportPdf', 'pdf', 'PDF olarak<br>kaydet') + big('exportDocx', 'word', 'Word olarak<br>kaydet') + big('openEgpdf', 'egpdf', 'egPDF\'te<br>aç')),
   ],
   table: () => [
     group('Satırlar ve Sütunlar', col(

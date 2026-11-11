@@ -119,3 +119,34 @@ change is committed and pushed, and an installer
     document, so the prompt only appears after a real crash.
 - **Smoke test harness:** screenshots are now forced to repaint, so visual
   checks see the current state.
+
+## 0.6.0: Word (.docx) import and export (iteration 5)
+
+- **Open Word files:** use Aç…, drag & drop, or "Open with" egUDF. The file
+  becomes a new UDF document; Kaydet suggests a .udf name next to the
+  original. Brought across:
+  - Text and font, size, bold/italic/underline/strike, sub/superscript,
+    colour, highlight.
+  - Paragraph alignment, indents, spacing, line spacing, tab stops.
+  - Numbered and bulleted lists (Word formats mapped to UYAP list types).
+  - Tables (column widths scaled to fit the page, merged columns, borders)
+    and images.
+  - Page size, margins and orientation; header and footer, with page
+    numbers detected.
+  - Comments (author, date, replies) and tracked changes.
+  - Style inheritance, Word's "no space between paragraphs of the same
+    style", and fields (only the visible result is kept).
+- **Save as Word:** Dosya / Görünüm → Dışa aktar → "Word olarak kaydet"
+  writes a .docx with the same features. Comments become Word comments
+  (replies included), and tracked changes stay tracked changes in Word.
+- **Tested** on 80 real Word files from Downloads (read during the test,
+  never stored):
+  - import → Word export → import keeps the text identical;
+  - import → UDF save keeps the text identical.
+- **Known differences:**
+  - Line breaks inside a paragraph become separate paragraphs (UDF has no
+    in-paragraph break).
+  - Text boxes, footnotes, EMF/WMF pictures and vertically merged cells are
+    not imported.
+  - Page counts can differ from Word. One 37-page Word document shows 61
+    pages here, and part of the difference is not yet explained.

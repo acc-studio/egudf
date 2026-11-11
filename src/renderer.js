@@ -16,6 +16,7 @@ import { readReview, reviewEntries } from './review/store.js';
 import { changeList, changesAt, resolveChanges, resolveAll, setTracking } from './review/changes.js';
 import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { createRuler } from './ruler.js';
+import { exportDocx, importDocx } from './interop/docx.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -219,12 +220,31 @@ const baseName = (p) => p.split(/[\\/]/).pop().replace(/\.udf$/i, '');
 async function openPath(path) {
   const existing = app.tabs.find((t) => t.path && t.path.toLowerCase() === path.toLowerCase());
   if (existing) { activate(existing); return existing; }
+  if (/\.docx$/i.test(path)) return openDocx(path);
   try {
     const bytes = await native.readFile(path);
     return await openBytes(bytes, { path, title: baseName(path) });
   } catch (e) {
     toast(`Açılamadı: ${e.message || e}`, { type: 'bad' });
     removeRecent(path);
+    return null;
+  }
+}
+
+/** Word → new unsaved UDF tab (Save asks for a .udf name next to the original). */
+async function openDocx(path, bytes = null) {
+  try {
+    const r = importDocx(bytes || await native.readFile(path));
+    const title = path ? path.split(/[\\/]/).pop().replace(/\.docx$/i, '') : 'Word belgesi';
+    const tab = newTab({ title, doc: r.doc, meta: r.meta, review: r.review });
+    tab.dirty = true;
+    tab.importedFrom = path;
+    renderTabs();
+    if (r.review.comments.length || changeList(tab.editor.state.doc).length) showPane(app, true);
+    toast('Word belgesi içe aktarıldı. UYAP için .udf olarak kaydedin.', { type: 'ok', ms: 5000 });
+    return tab;
+  } catch (e) {
+    toast(`Word belgesi açılamadı: ${e.message || e}`, { type: 'bad' });
     return null;
   }
 }
@@ -269,7 +289,7 @@ async function save(tab, { as = false } = {}) {
   if (!tab) return false;
   let path = tab.path;
   if (!path || as) {
-    path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/[^\\/]*$/, '') : ''}${tab.title}.udf`, kind: 'udf' });
+    path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/[^\\/]*$/, '') : tab.importedFrom ? tab.importedFrom.replace(/[^\\/]*$/, '') : ''}${tab.title}.udf`, kind: 'udf' });
     if (!path) return false;
   }
   let bytes;
@@ -380,7 +400,7 @@ function renderWelcome() {
     <h2>Yeni</h2><div class="tpl-grid">${TEMPLATES.map(tplCard).join('')}</div>
     <h2 style="display:flex;align-items:center;gap:12px">Son kullanılanlar <button class="btn" data-act="open">${icon('open')}Aç…</button></h2>
     ${recentHtml()}
-    <div class="drop-hint">.udf dosyalarını buraya sürükleyip bırakın</div>
+    <div class="drop-hint">.udf veya Word (.docx) dosyalarını buraya sürükleyip bırakın</div>
   </div>`;
   wireStart(w);
 }
@@ -391,7 +411,7 @@ function backstage(section = 'new') {
   const t = app.active;
   const items = [
     ['new', 'new', 'Yeni'], ['open', 'open', 'Aç'], ['save', 'save', 'Kaydet'], ['saveAs', 'saveAs', 'Farklı kaydet'],
-    ['exportPdf', 'pdf', 'PDF olarak kaydet'], ['print', 'print', 'Yazdır (egPDF)'], ['sign', 'sign', 'İmzala'], ['uyapSend', 'upload', 'UYAP\'a gönder'],
+    ['exportPdf', 'pdf', 'PDF olarak kaydet'], ['exportDocx', 'word', 'Word olarak kaydet'], ['print', 'print', 'Yazdır (egPDF)'], ['sign', 'sign', 'İmzala'], ['uyapSend', 'upload', 'UYAP\'a gönder'],
     ['info', 'info', 'Bilgi'], ['profile', 'user', 'Avukat bilgilerim'],
   ];
   bs.innerHTML = `<div class="bs-side"><button class="back">← Geri</button>${items.map(([k, ic, l]) => `<button data-bs="${k}" class="${k === section ? 'active' : ''}">${icon(ic)}${l}</button>`).join('')}</div><div class="bs-main"></div>`;
@@ -656,6 +676,15 @@ async function runCmd(name, arg, el) {
       const bytes = await makePdf(tab);
       await native.writeFile(path, bytes);
       toast(`PDF kaydedildi: ${path.split(/[\\/]/).pop()}`, { type: 'ok', actions: [{ label: 'Klasörde göster', onClick: () => native.showInFolder(path) }] });
+      return;
+    }
+    case 'exportDocx': {
+      if (!tab) return;
+      const base = tab.path ? tab.path.replace(/\.udf$/i, '') : tab.importedFrom ? tab.importedFrom.replace(/\.docx$/i, ' (egUDF)') : tab.title;
+      const path = await native.saveDialog({ defaultPath: `${base}.docx`, kind: 'docx' });
+      if (!path) return;
+      await native.writeFile(path, exportDocx(tab.editor.getJSON(), tab.meta, tab.review));
+      toast(`Word belgesi kaydedildi: ${path.split(/[\\/]/).pop()}`, { type: 'ok', actions: [{ label: 'Klasörde göster', onClick: () => native.showInFolder(path) }] });
       return;
     }
     case 'print': case 'openEgpdf': {
@@ -1257,13 +1286,14 @@ function wireChrome() {
   window.addEventListener('drop', async (e) => {
     dragDepth = 0;
     document.body.classList.remove('dragging');
-    const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.udf$/i.test(f.name));
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.(udf|docx)$/i.test(f.name));
     if (!files.length) return;
     e.preventDefault();
     e.stopPropagation();
     for (const f of files) {
       const p = native.pathForFile(f);
       if (p) await openPath(p);
+      else if (/\.docx$/i.test(f.name)) await openDocx(null, new Uint8Array(await f.arrayBuffer()));
       else await openBytes(new Uint8Array(await f.arrayBuffer()), { path: null, title: f.name.replace(/\.udf$/i, '') });
     }
   }, true);
@@ -1284,13 +1314,19 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'docx', 'ruler', 'recovery', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     $('#modal-root').innerHTML = '';
     switch (step) {
       case 'start': return { ok: true, tabs: app.tabs.length };
+      case 'scroll-mid': { const t = app.active; if (!t) return { ok: true, skipped: true }; t.host.scrollTop = t.host.scrollHeight * 0.3; await wait(300); return { ok: true }; }
+      case 'opened': { // a file given on the command line, a moment later
+        await wait(1500);
+        const t = app.active;
+        return { ok: true, title: t?.title, pages: t?.pages, words: t ? wordCount(t) : 0, welcome: !$('#welcome').classList.contains('hidden') };
+      }
       case 'table': {
         const t = newDocument('blank');
         await wait(200);
@@ -1299,6 +1335,18 @@ window.__smoke = {
         await wait(300);
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'docx': {
+        const t = newDocument('dava');
+        await wait(300);
+        const bytes = exportDocx(t.editor.getJSON(), t.meta, t.review);
+        const p = `${out}${sep}smoke.docx`;
+        await native.writeFile(p, bytes);
+        t.dirty = false;
+        const t2 = await openPath(p);
+        await wait(500);
+        const same = docText(t2.editor.getJSON()) === docText(t.editor.getJSON());
+        return { ok: !!t2 && same && t2.dirty, bytes: bytes.length, same };
       }
       case 'ruler': {
         const t = newDocument('blank');
