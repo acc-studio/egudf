@@ -385,9 +385,12 @@ export function cssSizeToPt(v) {
   return n; // pt
 }
 
+const isDeleted = (c) => c.marks?.some((m) => m.type === 'deletion');
+
 function paragraphXml(n, w) {
   const parts = [];
-  const inl = n.content || [];
+  // tracked deletions are not part of the document text (pending review lives beside content.xml)
+  const inl = (n.content || []).filter((c) => !isDeleted(c));
   const emit = (tag, attrs, str) => {
     const start = w.text.length;
     w.text += str;
@@ -491,7 +494,7 @@ export function docText(doc) {
   const paras = [];
   (function walk(n) {
     if (n.type === 'paragraph') {
-      paras.push((n.content || []).map((c) => (c.type === 'text' ? c.text : '')).join(''));
+      paras.push((n.content || []).map((c) => (c.type === 'text' && !isDeleted(c) ? c.text : '')).join(''));
       return;
     }
     (n.content || []).forEach(walk);

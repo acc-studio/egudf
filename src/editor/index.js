@@ -11,6 +11,7 @@ import {
 } from './extensions.js';
 import { Pagination } from './pagination.js';
 import { CommentMark } from '../review/comments.js';
+import { InsertionMark, DeletionMark, TrackChanges } from '../review/changes.js';
 
 export function baseExtensions() {
   return [
@@ -46,6 +47,8 @@ export function baseExtensions() {
     UdfCommands,
     ListLabels,
     CommentMark,
+    InsertionMark,
+    DeletionMark,
   ];
 }
 
@@ -62,6 +65,7 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       ...baseExtensions(),
       LegalKeys,
       Search,
+      TrackChanges,
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],
     editorProps: {

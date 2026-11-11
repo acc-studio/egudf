@@ -75,6 +75,13 @@ const TABS = {
       btn('commentDelete', 'reject', 'Bu yorumu sil', { label: 'Sil' }) + btn('commentDeleteAll', 'tableDel', 'Belgedeki tüm yorumları sil', { label: 'Tümünü sil' }),
       btn('reviewPane', 'nav', 'Gözden geçirme bölmesi', { label: 'Bölmeyi göster' }),
     )),
+    group('İzleme', big('trackToggle', 'track', 'Değişiklikleri<br>izle', { title: 'Değişiklikleri izle (Ctrl+Shift+E)' }) + col(
+      btn('markup', 'pilcrow', 'Tüm işaretleri göster', { arg: 'all', label: 'Tüm işaretler' }),
+      btn('markup', 'page', 'Değişiklikleri kabul edilmiş gibi göster', { arg: 'none', label: 'İşaretsiz' }),
+    )),
+    group('Değişiklikler', `<span class="split vsplit">${big('acceptChange', 'accept', 'Kabul et', { cls: 'okc' })}<button class="rb" data-cmd="acceptMenu" title="Kabul seçenekleri">${icon('chevron', 'caret')}</button></span>`
+      + `<span class="split vsplit">${big('rejectChange', 'reject', 'Reddet', { cls: 'badc' })}<button class="rb" data-cmd="rejectMenu" title="Ret seçenekleri">${icon('chevron', 'caret')}</button></span>`
+      + col(btn('changePrev', 'chevron', 'Önceki değişiklik', { label: 'Önceki', cls: 'flip' }), btn('changeNext', 'chevron', 'Sonraki değişiklik', { label: 'Sonraki' }))),
     group('Yazım', big('spellcheck', 'spell', 'Yazım<br>denetimi', { title: 'Yazım denetimini aç/kapat' })),
   ],
   view: () => [
@@ -166,6 +173,8 @@ export function createRibbon(app) {
         case 'formatPainter': on = !!app.painter; break;
         case 'reviewPane': on = !$('#review-pane').classList.contains('hidden'); break;
         case 'spellcheck': on = app.spell !== false; break;
+        case 'trackToggle': on = !!ed.storage.trackChanges?.enabled; break;
+        case 'markup': on = (document.body.classList.contains('hide-markup') ? 'none' : 'all') === a; break;
         case 'toggleNav': on = !$('#nav-pane').classList.contains('hidden'); break;
         case 'pageNumbers': on = !!app.tab()?.meta.footer?.attrs?.['pageNumber-spec']; break;
         default:

@@ -362,7 +362,9 @@ async function runSmoke() {
   const shot = async (name) => fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   await wait(800);
   if (flag('pgdebug') != null) await win.webContents.executeJavaScript('window.__pgDebugOnly = true');
-  const steps = await win.webContents.executeJavaScript('window.__smoke.steps()');
+  let steps = await win.webContents.executeJavaScript('window.__smoke.steps()');
+  const only = flag('only');
+  if (only) steps = steps.filter((st) => only.split(',').includes(st));
   const results = {};
   for (const step of steps) {
     try {
@@ -372,6 +374,7 @@ async function runSmoke() {
     } catch (e) { results[step] = { ok: false, error: String(e.message || e) }; }
     await wait(700);
     await shot(step);
+    fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2)); // partial results survive a hang
   }
   fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2));
   // After capturePage() Electron (Windows) lingers ~100s in app.exit; the

@@ -13,7 +13,8 @@ import { createRibbon, PARA_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
 import { commentsAt } from './review/comments.js';
 import { readReview, reviewEntries } from './review/store.js';
-import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, reviewState } from './review/pane.js';
+import { changeList, changesAt, resolveChanges, resolveAll, setTracking } from './review/changes.js';
+import { wireReviewPane, renderReview, showPane, addComment, deleteComment, deleteAllComments, stepComment, author } from './review/pane.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -235,9 +236,10 @@ async function openBytes(bytes, { path, title }) {
     const v = await native.sign.verify({ sign: u.sign, content: u.contentXml });
     sig = { state: v.ok && v.valid ? 'valid' : 'invalid', info: v.ok ? v : { error: v.error } };
   }
-  const tab = newTab({ title, path, doc, meta, original: { contentXml: u.contentXml, docProps: u.docProps, sign: u.sign, bytes }, sig, review: review ? { comments: review.comments } : null });
+  const tab = newTab({ title, path, doc, meta, original: { contentXml: u.contentXml, docProps: u.docProps, sign: u.sign, bytes }, sig, review: review ? { comments: review.comments, tracking: review.tracking } : null });
+  if (review?.tracking) setTracking(tab.editor, true, author(app));
   if (review?.stale) toast('Belge egUDF dışında değiştirilmiş: yorum ve değişiklik işaretleri metne bağlanamadı.', { type: 'warn', ms: 6000 });
-  if (review?.comments.length) showPane(app, true);
+  if (review?.comments.length || changeList(tab.editor.state.doc).length) showPane(app, true);
   if (sig?.state === 'valid') toast(`İmzalı belge · ${sig.info.signer?.subjectCN || ''} · ${fmtDate(sig.info.signingTime)}`, { type: 'ok' });
   if (sig?.state === 'invalid') toast('Belgedeki imza doğrulanamadı.', { type: 'bad', actions: [{ label: 'Ayrıntı', onClick: () => signatureInfo(app, tab) }] });
   return tab;
@@ -728,6 +730,40 @@ async function runCmd(name, arg, el) {
     case 'selectAll': chain().selectAll().run(); return;
     case 'wordCount': wordCountDialog(app); return;
     case 'commentNew': addComment(app); return;
+    case 'trackToggle': {
+      if (!tab) return;
+      const on = !ed.storage.trackChanges.enabled;
+      setTracking(ed, on, author(app));
+      tab.review.tracking = on;
+      tab.reviewDirty = true;
+      renderTabs();
+      toast(on ? 'Değişiklikler izleniyor' : 'Değişiklik izleme kapalı', { ms: 1500 });
+      scheduleUI();
+      return;
+    }
+    case 'acceptChange': case 'rejectChange': {
+      const accept = name === 'acceptChange';
+      const here = changesAt(ed.state);
+      if (here.length) {
+        const a = Math.min(...here.map((c) => c.from)), b = Math.max(...here.map((c) => c.to));
+        resolveChanges(ed, a, b, accept);
+        stepChange(1, true);
+      } else if (!stepChange(1)) toast('Bekleyen değişiklik yok.');
+      return;
+    }
+    case 'acceptMenu': case 'rejectMenu': {
+      const accept = name === 'acceptMenu';
+      menu(el, [
+        { label: accept ? 'Bu değişikliği kabul et' : 'Bu değişikliği reddet', onClick: () => runCmd(accept ? 'acceptChange' : 'rejectChange') },
+        { label: accept ? 'Tüm değişiklikleri kabul et' : 'Tüm değişiklikleri reddet', onClick: () => { const n = resolveAll(ed, accept); toast(`${n} değişiklik ${accept ? 'kabul edildi' : 'reddedildi'}`, { type: 'ok', ms: 1800 }); } },
+        { sep: true },
+        { label: accept ? 'Kabul et ve izlemeyi durdur' : 'Reddet ve izlemeyi durdur', onClick: () => { resolveAll(ed, accept); if (ed.storage.trackChanges.enabled) runCmd('trackToggle'); } },
+      ]);
+      return;
+    }
+    case 'changePrev': stepChange(-1); return;
+    case 'changeNext': stepChange(1); return;
+    case 'markup': document.body.classList.toggle('hide-markup', arg === 'none'); localStorage.setItem('udf.markup', arg); tab?.editor.commands.repaginate(); scheduleUI(); return;
     case 'commentDelete': { const ids = tab ? commentsAt(ed.state) : []; if (ids.length) ids.forEach((id) => deleteComment(app, id)); else toast('İmleç bir yorumun üzerinde değil.'); return; }
     case 'commentDeleteAll': deleteAllComments(app); return;
     case 'commentPrev': stepComment(app, -1); return;
@@ -813,6 +849,12 @@ async function runCmd(name, arg, el) {
     // ---- sign / uyap
     case 'sign':
       if (!tab) return;
+      if (changeList(ed.state.doc).length) {
+        const n = changeList(ed.state.doc).length;
+        if (!(await confirmBox({ title: 'Bekleyen değişiklikler', text: `Belgede kabul edilmemiş ${n} değişiklik var. İmzalanan metin, tüm değişiklikler kabul edilmiş halidir. Kabul edip devam edilsin mi?`, ok: 'Kabul et ve imzala', icon: 'track' }))) return;
+        resolveAll(ed, true);
+        if (ed.storage.trackChanges.enabled) { setTracking(ed, false); tab.review.tracking = false; }
+      }
       if (tab.review?.comments.length && !(await confirmBox({ title: 'Yorumlar imzalanmaz', text: `Belgede ${tab.review.comments.length} yorum var. İmzalı dosya yorumsuz kaydedilir ve yorumlar belgeden kaldırılır.`, ok: 'Devam et', icon: 'comment' }))) return;
       if (tab.sig?.state === 'valid' && !tab.dirty && !(await confirmBox({ title: 'Belge zaten imzalı', text: 'Mevcut imza yeni imzayla değiştirilecek. Devam edilsin mi?', ok: 'Yeniden imzala', kind: 'ok', icon: 'sign' }))) return;
       signDialog(app, tab);
@@ -837,6 +879,18 @@ async function runCmd(name, arg, el) {
     default:
       console.warn('unknown command', name);
   }
+}
+
+/** Selects the next/previous tracked change. → false when there is none. */
+function stepChange(dir, afterResolve = false) {
+  const ed = app.ed();
+  if (!ed) return false;
+  const list = changeList(ed.state.doc);
+  if (!list.length) return false;
+  const pos = ed.state.selection[dir > 0 ? 'to' : 'from'];
+  const next = dir > 0 ? list.find((c) => (afterResolve ? c.from >= pos : c.from > pos)) || list[0] : [...list].reverse().find((c) => c.to < pos) || list[list.length - 1];
+  ed.chain().focus().setTextSelection({ from: next.from, to: next.to }).scrollIntoView().run();
+  return true;
 }
 
 function captureFormat(ed) {
@@ -995,6 +1049,10 @@ function refreshUI() {
   $('#zoom-label').textContent = `${Math.round(app.zoom * 100)}%`;
   $('#zoom-range').value = String(Math.round(app.zoom * 100));
   $('#sb-marks').classList.toggle('active', document.body.classList.contains('show-marks'));
+  const tracking = !!tab?.editor.storage.trackChanges.enabled;
+  $('#sb-track').classList.toggle('hidden', !tab);
+  $('#sb-track').classList.toggle('on', tracking);
+  $('#sb-track').innerHTML = `${icon('track')}<span>${tracking ? 'İzleme açık' : 'İzleme kapalı'}</span>`;
   for (const b of document.querySelectorAll('#qat [data-qat]')) {
     const c = b.dataset.qat;
     b.disabled = !tab || (c === 'undo' && !tab.editor.can().undo()) || (c === 'redo' && !tab.editor.can().redo());
@@ -1044,6 +1102,12 @@ function wireChrome() {
     return [{ label: 'Yeni yorum', icon: 'comment', kbd: 'Ctrl+Alt+M', onClick: () => runCmd('commentNew') }, ...(ids.length ? [{ label: 'Yorumu sil', icon: 'reject', onClick: () => runCmd('commentDelete') }] : [])];
   });
   app.spell = localStorage.getItem('udf.spell') !== '0';
+  app.changeItems = (t) => changeList(t.editor.state.doc);
+  app.resolveChange = (it, accept) => { resolveChanges(app.ed(), it.from, it.to, accept); renderReview(app); };
+  app.focusChange = (it) => app.ed()?.chain().focus().setTextSelection({ from: it.from, to: it.to }).scrollIntoView().run();
+  app.contextExtras.push((ed) => (changesAt(ed.state).length ? [{ label: 'Değişikliği kabul et', icon: 'accept', onClick: () => runCmd('acceptChange') }, { label: 'Değişikliği reddet', icon: 'reject', onClick: () => runCmd('rejectChange') }] : []));
+  if (localStorage.getItem('udf.markup') === 'none') document.body.classList.add('hide-markup');
+  $('#sb-track').onclick = () => runCmd('trackToggle');
   $('#btn-newtab').innerHTML = icon('plus');
   $('#btn-newtab').onclick = () => (app.tabs.length ? backstage('new') : newDocument('blank'));
   $('#btn-quick-sign').innerHTML = `${icon('sign')}<span>İmzala</span>`;
@@ -1111,6 +1175,7 @@ function wireChrome() {
     }
     if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
     if (e.altKey && k === 'm' && app.ed()) { e.preventDefault(); runCmd('commentNew'); return; }
+    if (e.shiftKey && k === 'e' && app.ed()) { e.preventDefault(); runCmd('trackToggle'); return; }
     const map = { n: 'newBlank', o: 'open', s: e.shiftKey ? 'saveAs' : 'save', p: 'print', f: 'find', h: 'replace', w: 'close' };
     if (map[k] && !e.altKey) { e.preventDefault(); runCmd(map[k]); return; }
     if (k === '=' || k === '+') { e.preventDefault(); setZoom(app.zoom + 0.1); }
@@ -1163,7 +1228,7 @@ function wireChrome() {
 // ================================================================== smoke scenario (npm run smoke)
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'track', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1178,6 +1243,44 @@ window.__smoke = {
         await wait(300);
         const xml = serializeUdfXml(t.editor.getJSON(), t.meta);
         return { ok: /<table[^>]*columnCount="3"/.test(xml) && document.querySelector('#ribbon-tabs .contextual') != null };
+      }
+      case 'track': {
+        const t = newDocument('blank');
+        await wait(200);
+        const ed = t.editor;
+        ed.chain().focus().insertContent('Davacı vekili beyan eder.').run();
+        runCmd('trackToggle');
+        const tracking = ed.storage.trackChanges.enabled;
+        // type " Av." after "vekili" (pos 14)
+        ed.commands.setTextSelection(14);
+        ed.view.dispatch(ed.state.tr.insertText(' Av.', 14));
+        // backspace the "r" of "eder" → deletion mark, cursor moves before it
+        const txt = () => ed.state.doc.textContent;
+        const end = ed.state.doc.content.size - 2; // before "."
+        ed.commands.setTextSelection(end);
+        ed.view.dispatch(ed.state.tr.delete(end - 1, end));
+        const afterBs = txt();
+        const cursor = ed.state.selection.from;
+        const list = changeList(ed.state.doc);
+        const xml = serializeUdfXml(ed.getJSON(), t.meta);
+        const text = parseUdfXml(xml).doc;
+        const saved = docText(text);
+        // reject the insertion, accept the deletion
+        const insItem = list.find((c) => c.kind === 'insertion');
+        resolveChanges(ed, insItem.from, insItem.to, false);
+        resolveAll(ed, true);
+        const final = txt();
+        // undo brings the change marks back
+        ed.commands.undo();
+        const undone = changeList(ed.state.doc).length;
+        await wait(100);
+        runCmd('trackToggle');
+        await wait(50);
+        const offAfter = !ed.storage.trackChanges.enabled;
+        return { offAfter,
+          ok: tracking && afterBs === 'Davacı vekili Av. beyan eder.' && cursor === end - 1 && list.length === 2 && saved === 'Davacı vekili Av. beyan ede.' && final === 'Davacı vekili beyan ede.' && undone > 0 && offAfter,
+          afterBs, cursor, end, kinds: list.map((c) => c.kind), saved, final, undone,
+        };
       }
       case 'comments': {
         const t = newDocument('blank');
@@ -1275,13 +1378,14 @@ window.__smoke = {
         return { ok: bg !== 'rgb(244, 244, 245)', bg };
       }
       case 'theme-restore': await setTheme(app, app._prevTheme || 'system'); ribbon.show('home'); return { ok: true };
-      case 'ui-insert': case 'ui-layout': case 'ui-sign': case 'ui-uyap': case 'ui-view':
+      case 'ui-insert': case 'ui-layout': case 'ui-review': case 'ui-sign': case 'ui-uyap': case 'ui-view':
         ribbon.show(step.slice(3));
-        return { ok: true };
+        await wait(500);
+        return { ok: ribbon.current() === step.slice(3), current: ribbon.current(), head: document.querySelector('#ribbon-tabs .active')?.textContent };
       case 'backstage': ribbon.show('home'); backstage('new'); return { ok: true };
       case 'welcome': {
         $('#backstage').classList.add('hidden');
-        for (const t of [...app.tabs]) { t.dirty = false; await closeTab(t); }
+        for (const t of [...app.tabs]) { t.dirty = false; t.reviewDirty = false; await closeTab(t); }
         return { ok: !$('#welcome').classList.contains('hidden') };
       }
       case 'debug': {

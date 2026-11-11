@@ -19,13 +19,13 @@ export async function readReview(other, contentXml) {
   try {
     const r = JSON.parse(new TextDecoder().decode(raw));
     const fresh = r.contentSha256 === await sha256Hex(contentXml);
-    return { doc: fresh ? r.doc : null, comments: Array.isArray(r.comments) ? r.comments : [], stale: !fresh };
+    return { doc: fresh ? r.doc : null, comments: Array.isArray(r.comments) ? r.comments : [], tracking: !!r.tracking, stale: !fresh };
   } catch { return null; }
 }
 
 /** True when the tab holds anything worth persisting. */
 export function hasReview(tab, docJson) {
-  if (tab.review?.comments?.length) return true;
+  if (tab.review?.comments?.length || tab.review?.tracking) return true;
   let found = false;
   const walk = (n) => {
     if (found) return;
@@ -39,6 +39,6 @@ export function hasReview(tab, docJson) {
 /** → { [REVIEW_ENTRY]: bytes } or {} */
 export async function reviewEntries(tab, docJson, contentXml) {
   if (!hasReview(tab, docJson)) return {};
-  const payload = { v: 1, app: 'egUDF', contentSha256: await sha256Hex(contentXml), comments: tab.review?.comments || [], doc: docJson };
+  const payload = { v: 1, app: 'egUDF', contentSha256: await sha256Hex(contentXml), comments: tab.review?.comments || [], tracking: !!tab.review?.tracking, doc: docJson };
   return { [REVIEW_ENTRY]: new TextEncoder().encode(JSON.stringify(payload)) };
 }

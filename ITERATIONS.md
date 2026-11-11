@@ -69,3 +69,33 @@ change is committed and pushed, and an installer
     signed file is saved without comments, and they are removed. Filed
     documents never carry review data.
 - **Spell-check toggle:** Gözden Geçir → Yazım denetimi (remembered).
+
+## 0.4.0: Track changes (iteration 3)
+
+- **Değişiklikleri izle:** Gözden Geçir tab, Ctrl+Shift+E, or the
+  "İzleme açık/kapalı" button in the status bar.
+  - Typed text is underlined in the author's colour.
+  - Deleted text stays visible with red strike-through instead of
+    disappearing.
+  - Backspace/Delete move the cursor over deleted text as in Word.
+  - Deleting your own pending insertion simply removes it.
+- **Accept / reject:** Kabul et / Reddet act on the change under the
+  cursor (or the selection) and jump to the next one.
+  - Their drop-down menus: Tümünü kabul et / Tümünü reddet, and
+    "… ve izlemeyi durdur".
+  - Önceki / Sonraki step through changes; right-click on a change also
+    offers Kabul et / Reddet.
+  - Every change is listed in the review pane, with author, time and
+    accept/reject buttons.
+- **Display:** "Tüm işaretler" shows the markup; "İşaretsiz" shows the
+  document as if every change were accepted.
+- **Saving:** content.xml (what UYAP and any other UDF reader sees) always
+  holds the accepted text. The markup itself, and whether tracking is on,
+  are kept in the review entry and come back when you reopen the file in
+  egUDF.
+- **Signing:** with pending changes you are asked to accept them; the signed
+  text is the accepted version.
+- **Undo:** undo/redo work normally while tracking.
+- **Limitations:** formatting changes (bold, size…) and paragraph
+  splits/joins are not tracked; text changes are.
+- **Fix:** comment and change times are shown in local time.

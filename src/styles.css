@@ -368,3 +368,18 @@ body.painting .udf-doc { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http:/
 .udf-doc .udf-comment .udf-comment { background: rgba(255, 193, 7, .45); }
 .rb.flip .ic { transform: rotate(180deg); }
 .udf-doc .udf-comment.resolved { background: none; border-bottom: 1px dotted rgba(127,127,127,.6); }
+
+/* ---------- iteration 3: track changes ---------- */
+.udf-doc ins.udf-ins { text-decoration: underline; text-decoration-color: var(--rev, #2e7d32); color: var(--rev, #2e7d32); text-underline-offset: 2px; }
+.udf-doc del.udf-del { text-decoration: line-through; color: #c62828; text-decoration-color: #c62828; }
+body.hide-markup .udf-doc del.udf-del { display: none; }
+body.hide-markup .udf-doc ins.udf-ins { text-decoration: none; color: inherit; }
+#statusbar #sb-track.on { color: var(--accent); background: var(--accent-soft); }
+.split.vsplit { display: inline-flex; flex-direction: column; align-items: stretch; }
+.split.vsplit > .rb.big { height: 50px; border-radius: 6px 6px 0 0; }
+.split.vsplit > .rb:not(.big) { height: 16px; padding: 0; justify-content: center; border-radius: 0 0 6px 6px; }
+.split.vsplit > .rb:not(.big) .ic { width: 12px; height: 12px; }
+.rb.okc .ic { color: var(--ok); }
+.rb.badc .ic { color: var(--danger); }
+#review-pane .nav-head > span:first-child { white-space: nowrap; }
+#review-pane #rv-count { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-weight: 400; }
