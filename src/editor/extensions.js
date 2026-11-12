@@ -149,7 +149,8 @@ const withUdf = (ext) => ext.extend({
     const u = props.node.attrs.udf;
     if (u && Object.keys(u).length && Array.isArray(out) && typeof out[1] === 'object') out[1]['data-udf'] = JSON.stringify(u);
     if (props.node.type.name === 'table' && Array.isArray(out) && typeof out[1] === 'object') {
-      out[1].class = `${out[1].class || ''} ${(u?.border || 'borderCell') === 'borderNone' ? 'udf-noborder' : ''}`.trim();
+      const mode = u?.border || 'borderCell';
+      out[1].class = `${out[1].class || ''} ${mode === 'borderNone' ? 'udf-noborder' : mode === 'borderTable' ? 'udf-bframe' : mode === 'borderRow' ? 'udf-brows' : ''}`.trim();
     }
     return out;
   },

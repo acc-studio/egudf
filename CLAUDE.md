@@ -27,6 +27,15 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
   - **Style names** are UYAP's own (from editor_lib.jar): `BULLET_TYPE_{ELLIPSE,RECTANGLE,RECTANGLE_D,DIAMOND,DIAMOND_2,ARROW,TRIANGLE}` and `NUMBER_TYPE_{NUMBER,CHAR_SMALL,CHAR_BIG,ROMAN_SMALL,ROMAN_BIG}_{DOT,TRE,PARANTHESE,D_PARANTHESE}`. There is no dash.
   - **Per level:** the style at level N is `SecListTypeLevelN`; otherwise the type at level 1, and the defaults at deeper levels: a. i. (1) (a) (i) for numbers, ■ □ ◆ ➤ ► for bullets.
   - All of this lives in `src/udf/common.js` (`uyapLevelType`, `uyapListType`).
+- **What .udf can hold** (checked in UYAP; `src/udf/uyapify.js` converts Word content to it):
+  - Only Swing StyleConstants attributes (no paragraph borders, letter spacing or tab leaders).
+  - Tables have one `border` mode: `borderCell` grid / `borderRow` / `borderTable` frame / `borderNone`.
+    - Cell-level `border="borderCell"` with colour/width draws a full box; `borderSpec` is not per side.
+    - Cell backgrounds and row `height` are ignored.
+  - Horizontal merge: a row with fewer cells plus its own `columnSpans`. There are no vertical merges.
+  - The format has no page breaks; UYAP drops `<page-break/>`.
+  - UYAP adds space-after and space-before; Word uses the larger.
+- **Learning how UYAP writes something:** drive the official editor with `tools/uyap-keys.ps1` (SendKeys; screenshots: `tools/uyap-shot.ps1`) (wait for the full window, not the splash), save, and read its XML. Use only scratch copies.
 - `npm test` asserts parse→serialize→parse idempotency over all real samples; keep it green when touching `src/udf/codec.js`.
 
 ## Review data, interop, comfort (0.2–0.7, see ITERATIONS.md)

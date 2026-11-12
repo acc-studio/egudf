@@ -24,6 +24,7 @@ import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
 import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
+import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
 import { layoutTabsDom } from './editor/tabs.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
@@ -447,25 +448,22 @@ async function ensureFonts(tab) {
 app.ensureFonts = ensureFonts;
 
 /**
- * Make a document's lists what UYAP Doküman Editörü will show once saved as .udf:
- * no hanging indent on list paragraphs, only list styles UYAP has. Used when a Word
- * document becomes a .udf and when Word content is pasted into a .udf, so egUDF
- * shows the same as the official editor. Not an undo step, not a tracked change.
+ * Make a Word document what a .udf can hold, as UYAP Doküman Editörü will show it
+ * (src/udf/uyapify.js). Used when a Word document becomes a .udf, so egUDF shows
+ * the same as the official editor. Not an undo step, not a tracked change.
  */
 function uyapNormalize(tab) {
+  const before = tab.editor.getJSON();
+  const { doc, meta } = uyapifyDoc(before, tab.meta);
+  if (JSON.stringify(doc) === JSON.stringify(before) && JSON.stringify(meta) === JSON.stringify(tab.meta)) return false;
+  tab.meta = meta;
+  tab._hHtml = undefined;
+  tab._fHtml = undefined;
   const ed = tab.editor;
-  const tr = ed.state.tr;
-  ed.state.doc.descendants((node, pos) => {
-    const l = node.type.name === 'paragraph' && node.attrs.list;
-    if (!l) return true;
-    const type = uyapListType(l.kind, l.type);
-    const fli = Math.max(0, node.attrs.firstLineIndent || 0);
-    if (type !== l.type || fli !== (node.attrs.firstLineIndent || 0)) tr.setNodeMarkup(pos, null, { ...node.attrs, firstLineIndent: fli, list: { ...l, type } });
-    return false;
-  });
-  if (!tr.docChanged) return false;
+  const tr = ed.state.tr.replaceWith(0, ed.state.doc.content.size, ed.schema.nodeFromJSON(doc).content);
   tr.setMeta('addToHistory', false).setMeta('trackSkip', true);
   ed.view.dispatch(tr);
+  applyGeometry(tab);
   return true;
 }
 app.uyapNormalize = uyapNormalize;
@@ -506,8 +504,9 @@ async function pasteFromWord(tab, html, text) {
   try { const d = await native.readOffice(); pkg = d && wordPackage(d.embed); if (d?.text) text = d.text; } catch {}
   try {
     if (pkg) {
-      const r = pasteDocx(tab.editor, pkg, { text, base: tab.meta.base, review: tab.review });
-      if (tab.format !== 'docx') uyapNormalize(tab); // pasted into a .udf: lists as UYAP will draw them
+      // pasted into a .udf: only what UYAP can show, as it will show it
+      const transform = tab.format === 'docx' ? null : (blocks) => uyapifyBlocks(blocks, { base: tab.meta.base });
+      const r = pasteDocx(tab.editor, pkg, { text, base: tab.meta.base, review: tab.review, transform });
       if (r.comments) { renderReview(app); showPane(app, true); }
       ensureFonts(tab);
       return r;
@@ -1907,7 +1906,7 @@ function smokeWordReview() {
 }
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2050,6 +2049,21 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'docx-to-udf': { // Word → .udf: the open tab becomes what UYAP will show
+        const p = `${out}${sep}word2udf.docx`;
+        await native.writeFile(p, exportDocx(smokeWordDoc(), smokeWordMeta(), smokeWordReview()));
+        const t = await openPath(p);
+        await wait(300);
+        const up = `${out}${sep}word2udf.udf`;
+        await save(t, { path: up, quiet: true });
+        await wait(300);
+        const json = JSON.stringify(t.editor.getJSON());
+        const hanging = /"firstLineIndent":-/.test(json);
+        const fmt = /"fmt":\{/.test(json);
+        const u = readUdf(await native.readFile(up));
+        const lists = [...u.contentText.matchAll(/<paragraph\b[^>]*Numbered="true"[^>]*>/g)].map((m) => m[0]);
+        return { ok: t.format === 'udf' && !hanging && !fmt && lists.length === 3 && lists.every((l) => /SecListTypeLevel1=/.test(l) && !/FirstLineIndent="-/.test(l)), format: t.format, hanging, fmt, lists: lists.length };
       }
       case 'docx-header': { // a tall Word header pushes the body down instead of overlapping it
         setZoom(1);

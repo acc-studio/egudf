@@ -232,6 +232,28 @@ function parseParagraph(el, ctx) {
 
 const CELL_CHROME_PT = 7.5;
 
+/** Row cell edges on the table's column edges → colspan per cell (else null). */
+function rowColspans(tableSpans, rowSpans, cols, n) {
+  const frac = (str, len) => {
+    const v = String(str || '').split(',').map((x) => num(x, NaN));
+    const ok = v.length === len && v.every((x) => Number.isFinite(x) && x > 0);
+    const arr = ok ? v : Array(len).fill(1);
+    const tot = arr.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    return arr.map((x) => (acc += x / tot));
+  };
+  const te = frac(tableSpans, cols), re = frac(rowSpans, n);
+  const out = [];
+  let prev = 0;
+  for (const e of re) {
+    const k = te.findIndex((t) => Math.abs(t - e) < 0.02);
+    if (k < prev) return null;
+    out.push(k + 1 - prev);
+    prev = k + 1;
+  }
+  return prev === cols ? out : null;
+}
+
 function spansToWidths(spans, cols, widthPt) {
   const s = String(spans || '').split(',').map((x) => num(x, NaN));
   const total = s.length === cols && s.every((x) => Number.isFinite(x) && x > 0) ? s.reduce((a, b) => a + b, 0) : 0;
@@ -256,13 +278,21 @@ function parseTable(tEl, ctx, widthPt) {
   const widths = spansToWidths(ta.columnSpans, cols, widthPt);
   const rows = rowEls.map((rEl) => {
     const ra = attrsOf(rEl);
-    const rowWidths = ra.columnSpans ? spansToWidths(ra.columnSpans, elems(rEl).filter((c) => c.tagName === 'cell').length, widthPt) : widths;
-    const cells = elems(rEl).filter((c) => c.tagName === 'cell').map((cEl, i) => {
+    const cellEls = elems(rEl).filter((c) => c.tagName === 'cell');
+    const rowWidths = ra.columnSpans ? spansToWidths(ra.columnSpans, cellEls.length, widthPt) : widths;
+    // UYAP merges cells horizontally with a row that has fewer cells and its own
+    // columnSpans: when the row's cell edges fall on the table's column edges, those are colspans
+    const spans = ra.columnSpans && cellEls.length < cols ? rowColspans(ta.columnSpans, ra.columnSpans, cols, cellEls.length) : null;
+    let gcol = 0;
+    const cells = cellEls.map((cEl, i) => {
+      const span = spans ? spans[i] : 1;
+      const colwidth = spans ? widths.slice(gcol, gcol + span) : [rowWidths[i] || rowWidths[rowWidths.length - 1]];
+      gcol += span;
       // nested tables get the cell's inner width (minus 3pt padding + 0.75pt border each side), or they overflow it
       const content = parseBlocks(cEl, ctx, null, Math.max(24, (rowWidths[i] || widths[0]) / PT_TO_PX - CELL_CHROME_PT));
       return {
         type: 'tableCell',
-        attrs: { colspan: 1, rowspan: 1, colwidth: [rowWidths[i] || rowWidths[rowWidths.length - 1]], udf: attrsOf(cEl) },
+        attrs: { colspan: span, rowspan: 1, colwidth, udf: attrsOf(cEl) },
         content: content.length ? content : [{ type: 'paragraph', attrs: defaultParaAttrs() }],
       };
     });
@@ -457,7 +487,7 @@ function tableXml(n, w) {
   delete ta._sig;
   const rows = n.content || [];
   const cols = Math.max(1, ...rows.map((r) => (r.content || []).reduce((s, c) => s + (c.attrs?.colspan || 1), 0)));
-  if (untouched) return `<${tag}${attrStr(ta)}>${rowsXml(rows, w)}</${tag}>`;
+  if (untouched) return `<${tag}${attrStr(ta)}>${rowsXml(rows, w, ta.columnSpans, cols)}</${tag}>`;
   if (!imported || ta.columnCount) ta.columnCount = String(cols);
   const widths = (rows[0]?.content || []).flatMap((c) => {
     const cw = c.attrs?.colwidth;
@@ -478,10 +508,30 @@ function tableXml(n, w) {
     if (!ta.border) ta.border = 'borderCell';
     if (!ta.tableName) ta.tableName = 'Sabit';
   }
-  return `<${tag}${attrStr(ta)}>${rowsXml(rows, w)}</${tag}>`;
+  return `<${tag}${attrStr(ta)}>${rowsXml(rows, w, ta.columnSpans, cols)}</${tag}>`;
 }
 
-function rowsXml(rows, w) {
+function rowsXml(rows, w, tableSpans = null, cols = 0) {
+  // UYAP has no row spans and merges columns with per-row columnSpans: lay the
+  // editor's grid out cell by cell (positions under a vertical merge become empty cells)
+  const units = String(tableSpans || '').split(',').map((x) => num(x, NaN));
+  const unit = (c) => (units.length === cols && units[c] > 0 ? units[c] : 100);
+  const covered = rows.map(() => []); // [row][col] → span of the merged cell above
+  const emptyXml = () => `<cell>${paragraphXml({ type: 'paragraph', attrs: defaultParaAttrs() }, w)}</cell>`;
+  const laid = rows.map((r, ri) => {
+    const out = []; // { xml, span }
+    let ci = 0;
+    const flushCovered = () => { while (covered[ri][ci]) { const sp = covered[ri][ci]; out.push({ xml: emptyXml(), span: sp, col: ci }); ci += sp; } };
+    for (const c of r.content || []) {
+      flushCovered();
+      const span = c.attrs?.colspan || 1, rs = c.attrs?.rowspan || 1;
+      for (let k = 1; k < rs && ri + k < rows.length; k++) covered[ri + k][ci] = span;
+      out.push({ xml: `<cell${attrStr(c.attrs?.udf || {})}>${blocksXml(c.content || [], w)}</cell>`, span, col: ci });
+      ci += span;
+    }
+    flushCovered();
+    return out;
+  });
   return rows.map((r, ri) => {
     const ra = { ...(r.attrs?.udf || {}) };
     const rtag = ra._tag || 'row';
@@ -491,16 +541,11 @@ function rowsXml(rows, w) {
       if (!ra.rowName) ra.rowName = `row${ri + 1}`;
       if (!ra.rowType) ra.rowType = 'dataRow';
     }
-    const cells = (r.content || []).map((c) => {
-      const inner = blocksXml(c.content || [], w);
-      const cell = `<cell${attrStr(c.attrs?.udf || {})}>${inner}</cell>`;
-      // UDF has no spans: repeat empty cells so the grid stays rectangular
-      const extraCells = Math.max(0, (c.attrs?.colspan || 1) - 1);
-      let pad = '';
-      for (let k = 0; k < extraCells; k++) pad += `<cell>${paragraphXml({ type: 'paragraph', attrs: defaultParaAttrs() }, w)}</cell>`;
-      return cell + pad;
-    }).join('');
-    return `<${rtag}${attrStr(ra)}>${cells}</${rtag}>`;
+    const cells = laid[ri];
+    if (cells.some((c) => c.span > 1)) {
+      ra.columnSpans = cells.map((c) => { let u = 0; for (let k = c.col; k < c.col + c.span; k++) u += unit(k); return String(Math.round(u)); }).join(',');
+    }
+    return `<${rtag}${attrStr(ra)}>${cells.map((c) => c.xml).join('')}</${rtag}>`;
   }).join('');
 }
 

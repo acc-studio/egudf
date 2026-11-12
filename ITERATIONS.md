@@ -480,3 +480,43 @@ PC) and comparing screenshots.
   - A unit test pins the rules above.
   - Real UYAP files still re-save identically.
   - Older egUDF files with hanging lists are repaired on the first re-save.
+
+## 0.15.0: Word → .udf as UYAP shows it (iteration 14)
+
+Goal: a Word document saved as .udf looks right in UYAP Doküman Editörü, and
+egUDF shows what UYAP will show. Everything below was found and checked by
+opening test files in the official editor. I also drove it with keystrokes, so
+UYAP itself could write test files.
+
+- **What the .udf format can and can't hold:**
+  - UYAP's attributes are Java Swing's: alignment, indents, line spacing,
+    spacing, tab stops, bold/italic/underline/strike, sub/superscript, font,
+    size, colours.
+  - Tables have one border mode: grid, rows, frame or none.
+  - UYAP has no paragraph borders, cell shading, row heights, vertical
+    merges, per-side cell borders, letter spacing, tab leaders or page breaks.
+    It drops a `<page-break/>` when it opens the file.
+- **Converting a Word document (Farklı kaydet → .udf, signing, pasting Word into a .udf):**
+  - Paragraph spacing: Word uses the larger of "after" and the next
+    "before"; UYAP adds them. egUDF converts, so converted documents no
+    longer spread out in UYAP.
+  - Exact / at-least line spacing becomes UYAP's line spacing.
+  - Caps and small caps become uppercase text (small caps at 80 % size).
+    Double strikethrough becomes strikethrough.
+  - Paragraph shading becomes a text highlight.
+  - Tables get the nearest UYAP border mode from Word's borders (full grid /
+    lines between rows / outer frame / none).
+  - Fonts only Office has (Aptos, Grandview…) become installed ones: UYAP is
+    a Java app and can't see them.
+  - The open tab is converted too: what you see in egUDF is what UYAP shows.
+- **Tables in .udf:**
+  - Merged cells across columns are written the way UYAP writes them (a row
+    with fewer cells and its own column widths), not as extra empty cells.
+  - Reading a real UYAP file now restores those merges.
+  - Cells merged down several rows become a top cell plus empty cells below,
+    so UYAP's columns stay aligned (before, the following cells shifted left).
+  - egUDF draws UYAP's frame-only and rows-only table borders.
+- **Testing:**
+  - New unit tests for every conversion rule and for the table layout.
+  - New smoke step `docx-to-udf`.
+  - Real UYAP files still re-save identically.

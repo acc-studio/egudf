@@ -27,12 +27,13 @@ export function wordPackage(embed) {
 
 /**
  * Inserts a .docx package at the selection.
- * opts: { text (clipboard plain text), base (target doc's base font), review (tab.review, gets the comments) }
+ * opts: { text (clipboard plain text), base (target doc's base font), review (tab.review, gets the comments),
+ *         transform (blocks → blocks, e.g. uyapifyBlocks when pasting into a .udf) }
  * → { blocks, comments } inserted
  */
-export function pasteDocx(editor, pkg, { text = '', base = null, review = null } = {}) {
+export function pasteDocx(editor, pkg, { text = '', base = null, review = null, transform = null } = {}) {
   const r = importDocx(pkg, { base });
-  const blocks = r.doc.content || [];
+  const blocks = transform ? transform(r.doc.content || []) : (r.doc.content || []);
   if (!blocks.length) return { blocks: 0, comments: 0 };
   const { state } = editor;
 
