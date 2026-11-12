@@ -53,7 +53,7 @@ export const Pagination = Extension.create({
           if (!result) return;
           const cur = paginationKey.getState(view.state);
           const same = cur.breaks.length === result.breaks.length
-            && cur.breaks.every((b, i) => b.pos === result.breaks[i].pos && Math.abs(b.fill - result.breaks[i].fill) < 0.5);
+            && cur.breaks.every((b, i) => b.pos === result.breaks[i].pos && Math.abs(b.fill - result.breaks[i].fill) < 0.5 && Math.abs((b.rep?.h || 0) - (result.breaks[i].rep?.h || 0)) < 0.5);
           if (!same) {
             const decos = [];
             result.breaks.forEach((b, i) => {
@@ -62,9 +62,10 @@ export const Pagination = Extension.create({
                 decos.push(Decoration.widget(b.pos, () => spacer(h, i), { side: -1, ignoreSelection: true, key: `pg-${i}-${Math.round(h * 2)}` } /* the key carries the height: same fill with another gap/margin must redraw */));
                 return;
               }
+              const hh = h + (b.rep?.h || 0);
               b.cells.forEach(([from, to], k) => decos.push(Decoration.node(from, to, {
-                style: `padding-top: calc(1.5pt + ${h}px)`,
-                ...(k ? {} : { class: 'pg-row-break', 'data-pg-h': String(h), 'data-page': String(i + 1) }),
+                style: `padding-top: calc(1.5pt + ${hh}px)`,
+                ...(k ? {} : { class: 'pg-row-break', 'data-pg-h': String(hh), 'data-page': String(i + 1) }),
               })));
             });
             const tr = view.state.tr.setMeta(paginationKey, { breaks: result.breaks, deco: DecorationSet.create(view.state.doc, decos) });
@@ -117,7 +118,7 @@ function spacerBoxes(dom) {
     const r = el.getBoundingClientRect();
     if (!el.classList.contains('pg-row-break')) return { top: r.top, h: r.height };
     const scale = r.width / (el.offsetWidth || r.width) || 1;
-    return { top: r.top, h: (parseFloat(el.dataset.pgH) || 0) * scale };
+    return { top: r.top, h: (parseFloat(el.dataset.pgH) || 0) * scale, row: true };
   });
 }
 
@@ -150,8 +151,19 @@ function measure(view, L) {
     const r = el.getBoundingClientRect();
     const pTop = toContent(r.top), pBottom = toContent(r.bottom);
     if (node.type.name === 'table') {
+      // Word "repeat as header row": the leading header rows are drawn again on each new page
+      let hdrN = 0, hdrH = 0;
+      if (L.wordRules) {
+        for (let k = 0; k < node.childCount && node.child(k).attrs.fmt?.header; k++) hdrN++;
+        if (hdrN && hdrN < node.childCount) {
+          let off = offset + 1;
+          for (let k = 0; k < hdrN; k++) { const d = view.nodeDOM(off); if (d?.getBoundingClientRect) hdrH += d.getBoundingClientRect().height / scale; off += node.child(k).nodeSize; }
+        }
+      }
+      let rowIdx = 0;
       // one unit per row: a long table continues on the next page instead of jumping there whole
       node.forEach((row, rOff) => {
+        const ri = rowIdx++;
         const rowPos = offset + 1 + rOff;
         const tr = view.nodeDOM(rowPos);
         if (!tr || tr.nodeType !== 1) return;
@@ -159,7 +171,7 @@ function measure(view, L) {
         const cells = [];
         row.forEach((cell, cOff) => cells.push([rowPos + 1 + cOff, rowPos + 1 + cOff + cell.nodeSize]));
         // first row breaks before the whole table (widget), later rows pad their cells
-        units.push(rOff === 0 ? { pos: offset, top: pTop, bottom: toContent(rr.bottom), blk, li: 0, tbl: true } : { pos: rowPos, top: toContent(rr.top), bottom: toContent(rr.bottom), cells, blk, li: 1, tbl: true });
+        units.push(rOff === 0 ? { pos: offset, top: pTop, bottom: toContent(rr.bottom), blk, li: 0, tbl: true } : { pos: rowPos, top: toContent(rr.top), bottom: toContent(rr.bottom), cells, blk, li: 1, tbl: true, ...(hdrH && ri >= hdrN ? { rep: { h: hdrH, table: offset, n: hdrN } } : {}) });
       });
       if (units.length) units[units.length - 1].bottom = Math.max(units[units.length - 1].bottom, pBottom);
       blk++;
@@ -242,8 +254,8 @@ function measure(view, L) {
       const v = units[k];
       const fill = Math.max(0, pageEnd(cur) - (v.top + shift));
       if (!breaks.length || breaks[breaks.length - 1].pos !== v.pos) {
-        breaks.push(v.cells ? { pos: v.pos, fill, cells: v.cells } : { pos: v.pos, fill });
-        shift += fill;
+        breaks.push(v.cells ? { pos: v.pos, fill, cells: v.cells, ...(v.rep ? { rep: v.rep } : {}) } : { pos: v.pos, fill });
+        shift += fill + (v.rep?.h || 0);
         cur++;
         fnUsed = fnOf(v);
         if (k < j) { j = k; end = Math.max(end, v.bottom + shift); continue; } // re-run the moved units on the new page
@@ -320,7 +332,9 @@ function collectSpacers(view, L, result) {
   const breaks = paginationKey.getState(view.state).breaks;
   const spacers = spacerBoxes(view.dom).map((s, i) => ({
     y: (s.top - sheetRect.top) / scale,
+    row: !!s.row, // a table split across the break (its cells are padded through the margins)
     fill: breaks[i]?.fill || 0,
+    rep: breaks[i]?.rep || null, // header rows to draw at the top of the next page
   }));
   return { pages: spacers.length + 1, spacers, lastFill: result.lastFill };
 }

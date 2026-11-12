@@ -300,6 +300,11 @@ function drawOverlay(tab, L) {
   bottoms.push(tab.sheet.offsetHeight);
   const n = tops.length;
   let html = '';
+  // a table split across pages: its padded cells run through the margins; paint them over
+  L.spacers.forEach((s, i) => {
+    if (!s.row) return;
+    html += `<div class="pg-mask" style="top:${s.y + 1}px;height:${bottoms[i] - s.y - 1}px"></div><div class="pg-mask" style="top:${tops[i + 1]}px;height:${g.top - 1}px"></div>`;
+  });
   for (let i = 0; i < n; i++) {
     if (i < n - 1 && !tab.printing) html += `<div class="pg-band" style="top:${bottoms[i]}px;height:${GAP}px"></div>`;
     if (hdr && i + 1 >= startPage) html += `<div class="pg-header" style="top:${tops[i] + g.headerOff}px;left:${g.left}px;right:${g.right}px">${hHtml}</div>`;
@@ -323,6 +328,27 @@ function drawOverlay(tab, L) {
   }
   tab.overlay.innerHTML = html;
   if (/\t/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36);
+  // Word tables: header rows repeated at the top of each page the table continues on
+  L.spacers.forEach((s, i) => {
+    if (!s.rep) return;
+    const tdom = tab.editor.view.nodeDOM(s.rep.table);
+    const table = tdom?.querySelector?.('table') || (tdom?.tagName === 'TABLE' ? tdom : null);
+    if (!table) return;
+    const sheetR = tab.sheet.getBoundingClientRect(), tr = table.getBoundingClientRect();
+    const z = sheetR.width / tab.sheet.offsetWidth || 1;
+    const copy = document.createElement('table');
+    copy.className = `${table.className} pg-rep`;
+    copy.style.cssText = `position:absolute;left:${(tr.left - sheetR.left) / z}px;top:${tops[i + 1] + g.top}px;width:${tr.width / z}px;table-layout:fixed;border-collapse:collapse;margin:0`;
+    const cg = table.querySelector('colgroup');
+    if (cg) copy.append(cg.cloneNode(true));
+    const tb = document.createElement('tbody');
+    [...table.querySelectorAll(':scope > tbody > tr, :scope > tr')].slice(0, s.rep.n).forEach((row) => tb.append(row.cloneNode(true)));
+    copy.append(tb);
+    const wrap = document.createElement('div');
+    wrap.className = 'udf-doc pg-rep-wrap';
+    wrap.append(copy);
+    tab.overlay.append(wrap);
+  });
   tab.pageBoxes = { tops, bottoms };
   tab.pages = n;
   if (tab === app.active) scheduleUI();
@@ -2030,7 +2056,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2173,6 +2199,28 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'headerrows': { // Word tables: header rows repeat at the top of every page the table continues on
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        const row = (a, b, hdr) => ({ type: 'tableRow', attrs: { udf: {}, fmt: hdr ? { header: true } : null }, content: [a, b].map((s) => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [300], udf: {}, fmt: hdr ? { bg: '#d9d9d9' } : null }, content: [P(s)] })) });
+        const tbl = { type: 'table', attrs: { udf: { border: 'borderCell' } }, content: [row('SIRA', 'AÇIKLAMA', true), ...Array.from({ length: 70 }, (_, i) => row(String(i + 1), `Kalem ${i + 1}`))] };
+        const pth = `${out}${sep}headerrows.docx`;
+        await native.writeFile(pth, exportDocx({ type: 'doc', content: [P('Ekler listesi:'), tbl, P('Son.')] }, smokeWordMeta()));
+        const t = await openPath(pth);
+        await wait(1200);
+        const z = app.zoom, sr = t.sheet.getBoundingClientRect();
+        const reps = [...t.overlay.querySelectorAll('table.pg-rep')];
+        const okText = reps.every((r) => /SIRA/.test(r.textContent) && /AÇIKLAMA/.test(r.textContent));
+        // each copy sits above the first row of its page, inside the page
+        const breaks = [...t.editor.view.dom.querySelectorAll('.pg-row-break')];
+        const placed = reps.every((r, i) => {
+          const rr = r.getBoundingClientRect(), cell = breaks[i];
+          if (!cell) return false;
+          const firstText = cell.querySelector('p').getBoundingClientRect();
+          return rr.bottom <= firstText.top + 1 && (rr.top - sr.top) / z >= t.pageBoxes.tops[i + 1] - 1;
+        });
+        const inDoc = (t.editor.view.dom.textContent.match(/SIRA/g) || []).length;
+        return { ok: t.pages >= 2 && reps.length === t.pages - 1 && okText && placed && inDoc === 1, pages: t.pages, reps: reps.length, okText, placed, inDoc };
       }
       case 'wordpdf': { // a Word document's PDF is what the editor shows, one A4 page per page
         const P = (c) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), spaceBelow: 6 }, content: c });

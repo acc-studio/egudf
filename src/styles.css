@@ -528,3 +528,10 @@ img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: 
   body.printing .udf-doc .udf-field { background: none !important; border: none !important; }
   body.printing .udf-doc table.udf-noborder td, body.printing .udf-doc table.udf-noborder th { border-color: transparent !important; }
 }
+
+/* repeated table header rows (Word) drawn by the page overlay */
+.pg-rep-wrap { position: absolute; inset: 0 auto auto 0; padding: 0 !important; min-height: 0 !important; pointer-events: none; }
+.pg-rep td, .pg-rep th { padding-top: 1.5pt !important; }
+
+.pg-mask { position: absolute; left: -2px; right: -2px; background: #fff; }
+body.printing .pg-mask { background: #fff !important; }

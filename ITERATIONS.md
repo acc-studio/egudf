@@ -730,3 +730,19 @@ it.
 - **Testing:** new smoke step `wordpdf`: a 2-page Word document with
   footnotes gives a 2-page A4 PDF, and the editor's layout is restored
   afterwards.
+
+## 0.25.0: Long tables across pages (iteration 24)
+
+- **Repeated header rows (Word):** rows marked "repeat as header row" (in
+  Word, or in Tablo özellikleri → Satır) appear again at the top of every page
+  the table continues on, as in Word. They also appear in the PDF.
+- **Cleaner page breaks inside tables (all documents):** a table split across
+  pages used to show empty bordered cell stubs in the bottom margin of one page
+  and the top margin of the next. The page now ends at the last row's border,
+  and the next page starts with the table.
+- **Not done for .udf:** I couldn't confirm in the official editor whether UYAP
+  repeats its own header rows (`headerRow`), so .udf tables are drawn as
+  before.
+- **Testing:** new smoke step `headerrows`: a 70-row table over 2 pages has
+  exactly one repeated header per continuation page, placed above that page's
+  first row, and the header isn't duplicated in the document.
