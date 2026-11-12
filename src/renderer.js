@@ -24,6 +24,7 @@ import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
 import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
+import { paragraphDialog, fontDialog } from './worddialogs.js';
 import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
 import { layoutTabsDom } from './editor/tabs.js';
 import { footnotesOf } from './editor/footnote.js';
@@ -1067,39 +1068,6 @@ async function insertImage(ed) {
   ed.chain().focus().insertContent({ type: 'image', attrs: { src, width: Math.round(w), height: Math.round(hh) } }).run();
 }
 
-function paragraphDialog(ed) {
-  const p = ed.getAttributes('paragraph');
-  const cm = (v) => String(Math.round(((v || 0) / CM) * 100) / 100);
-  const body = h(`<div>
-    <div class="field-row">
-      <div class="field"><label>Hizalama</label><select id="pd-align"><option value="left">Sola</option><option value="center">Ortala</option><option value="right">Sağa</option><option value="justify">İki yana yasla</option></select></div>
-      <div class="field"><label>Satır aralığı</label><select id="pd-ls"><option value="0">1,0</option><option value="0.15">1,15</option><option value="0.5">1,5</option><option value="1">2,0</option><option value="1.5">2,5</option><option value="2">3,0</option></select></div>
-    </div>
-    <h3 class="sec">Girinti</h3>
-    <div class="field-row">
-      <div class="field"><label>Sol (cm)</label><input type="number" step="0.25" id="pd-l" value="${cm(p.leftIndent)}"></div>
-      <div class="field"><label>Sağ (cm)</label><input type="number" step="0.25" id="pd-r" value="${cm(p.rightIndent)}"></div>
-      <div class="field"><label>İlk satır (cm)</label><input type="number" step="0.25" id="pd-f" value="${cm(p.firstLineIndent)}"></div>
-    </div>
-    <h3 class="sec">Aralık</h3>
-    <div class="field-row">
-      <div class="field"><label>Önce (nk)</label><input type="number" step="1" min="0" id="pd-a" value="${p.spaceAbove || 0}"></div>
-      <div class="field"><label>Sonra (nk)</label><input type="number" step="1" min="0" id="pd-b" value="${p.spaceBelow || 0}"></div>
-    </div>
-    <p class="note">İlk satır için eksi değer asılı girinti verir.</p></div>`);
-  $('#pd-align', body).value = p.align || 'left';
-  const cur = p.lineSpacing || 0;
-  const ls = [0, 0.15, 0.5, 1, 1.5, 2].reduce((best, v) => (Math.abs(v - cur) < Math.abs(best - cur) ? v : best), 0);
-  $('#pd-ls', body).value = String(ls);
-  modal({
-    title: 'Paragraf', icon: 'lineSpacing', body, width: 520,
-    actions: [{ label: 'İptal' }, { label: 'Uygula', kind: 'primary', onClick: () => {
-      const n = (id) => parseFloat($(id, body).value) || 0;
-      ed.chain().focus().setParagraphAttrs({ align: $('#pd-align', body).value, lineSpacing: parseFloat($('#pd-ls', body).value), leftIndent: Math.max(0, n('#pd-l')) * CM, rightIndent: Math.max(0, n('#pd-r')) * CM, firstLineIndent: n('#pd-f') * CM, spaceAbove: Math.max(0, n('#pd-a')), spaceBelow: Math.max(0, n('#pd-b')) }).run();
-    } }],
-  });
-}
-
 // ================================================================== styles
 
 function applyParaStyle(ed, id) {
@@ -1258,7 +1226,8 @@ async function runCmd(name, arg, el) {
       changeCase(ed, next);
       return;
     }
-    case 'paragraphDialog': if (tab) paragraphDialog(ed); return;
+    case 'paragraphDialog': if (tab) app.lastDialog = paragraphDialog(app, tab, ed); return;
+    case 'fontDialog': if (tab) app.lastDialog = fontDialog(app, tab, ed); return;
     case 'pastePlain': ed?.commands.focus(); native.edit('pasteAndMatchStyle'); return;
     case 'selectAll': chain().selectAll().run(); return;
     case 'wordCount': wordCountDialog(app); return;
@@ -1935,6 +1904,7 @@ function wireChrome() {
     if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
     if (e.altKey && k === 'm' && app.ed()) { e.preventDefault(); runCmd('commentNew'); return; }
     if (e.altKey && k === 'f' && app.ed()) { e.preventDefault(); runCmd('insertFootnote'); return; }
+    if (!e.altKey && !e.shiftKey && k === 'd' && app.ed()) { e.preventDefault(); runCmd('fontDialog'); return; }
     if (!e.altKey && !e.shiftKey && e.key === 'Enter' && app.tab()?.format === 'docx' && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('pageBreak'); return; }
     // Word paragraph/character shortcuts
     if (app.ed() && !e.altKey) {
@@ -2024,7 +1994,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2167,6 +2137,46 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'worddialogs': { // Word's Paragraph and Font dialogs set everything the model holds
+        const p = `${out}${sep}dialogs.docx`;
+        await native.writeFile(p, exportDocx({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: 'Bedel\t1.500 TL ve uzun bir metin.' }] }] }, smokeWordMeta()));
+        const t = await openPath(p);
+        await wait(300);
+        const ed = t.editor;
+        const click = (body, label) => [...document.querySelectorAll('#modal-root .modal-foot button')].find((b) => b.textContent === label).click();
+        ed.commands.setTextSelection(3);
+        runCmd('paragraphDialog');
+        await wait(150);
+        let b = app.lastDialog;
+        const set = (sel, v) => { const el = b.querySelector(sel); if (el.type === 'checkbox') el.checked = v; else el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+        set('#pd-sp', 'hang'); set('#pd-spv', '1'); set('#pd-l', '2'); set('#pd-ls', 'exact'); set('#pd-lsv', '18');
+        set('#pd-kn', true); set('#pd-bb', true); set('#pd-sh', true);
+        b.querySelector('#pd-addtab').click();
+        set('.wd-stop:last-child .st-pos', '10'); set('.wd-stop:last-child .st-al', '1'); set('.wd-stop:last-child .st-ld', '1');
+        click(b, 'Uygula');
+        await wait(150);
+        const a = ed.getAttributes('paragraph');
+        const para = a.firstLineIndent < -28 && a.firstLineIndent > -29 && Math.abs(a.leftIndent - 2 * 28.3465) < 0.1 && a.lineRule === 'exact' && a.lineHeight === 18 && a.keepNext && a.border?.bottom && a.shading && /^283.4[67]:1:1$/.test(a.tabSet || '');
+        ed.commands.setTextSelection({ from: 1, to: 6 });
+        runCmd('fontDialog');
+        await wait(150);
+        b = app.lastDialog;
+        set('#fd-f', 'Arial'); set('#fd-s', '14'); set('#fd-sc', true); set('#fd-ls', '2'); set('#fd-b', true);
+        click(b, 'Uygula');
+        await wait(150);
+        const ts = ed.getAttributes('textStyle');
+        const font = ts.fontFamily === 'Arial' && ts.fontSize === '14pt' && ts.smallCaps === true && ts.letterSpacing === 2 && ed.isActive('bold');
+        // a .udf: Word-only options are disabled
+        const u = newDocument('blank');
+        await wait(150);
+        runCmd('paragraphDialog');
+        await wait(150);
+        const udfDis = app.lastDialog.querySelector('#pd-kn').disabled && app.lastDialog.querySelector('#pd-bb').disabled && !app.lastDialog.querySelector('#pd-ls option[value="exact"]');
+        click(app.lastDialog, 'İptal');
+        u.dirty = false;
+        await closeTab(u);
+        return { ok: para && font && udfDis, para, font, udfDis, a: { fl: a.firstLineIndent, tabs: a.tabSet, lr: a.lineRule }, ts };
       }
       case 'bookmarks': { // Ctrl+click on an internal link jumps to its bookmark; both survive a Word round trip
         const P = (c) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: c });

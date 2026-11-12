@@ -499,3 +499,15 @@ sup.udf-fnref.ProseMirror-selectednode { outline: 1px solid var(--accent); }
 .udf-doc p.udf-p:has(> img.wrap-abs), .pg-header p.udf-p:has(> img.wrap-abs), .pg-footer p.udf-p:has(> img.wrap-abs) { position: relative; }
 img.udf-img.wrap-front { z-index: 2; }
 img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: none; }
+
+/* Word's Paragraph / Font dialogs */
+.wd-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: -4px 0 12px; }
+.wd-tabs button { border: none; background: none; padding: 7px 12px; font: inherit; color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent; }
+.wd-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.wd-pane.hidden { display: none; }
+.wd .chk { display: inline-flex; align-items: center; gap: 6px; margin: 4px 14px 4px 0; }
+.wd .chk input:disabled + *, .wd .chk:has(input:disabled) { opacity: .55; }
+.wd-checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 10px; }
+.wd-stop { align-items: flex-end; }
+.wd-preview { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #000; text-align: center; min-height: 52px; }
+.wd-udf { color: #b25a00; font-weight: 600; }

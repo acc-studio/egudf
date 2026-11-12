@@ -665,3 +665,32 @@ highlights.
     Word: same position, size and wrapping.
   - **In .udf:** UYAP only has inline pictures, so floating ones become
     inline when a Word document is saved as .udf.
+
+## 0.22.0: Word's Paragraph and Font dialogs (iteration 21)
+
+egUDF could show and keep most Word formatting, but there was no way to set
+it.
+
+- **Paragraph** (Giriş → Paragraf → Paragraf ayarları), in four sections as in
+  Word:
+  - Girintiler ve aralıklar: alignment; left/right indents; special first
+    line or hanging; space before/after; line spacing single / 1.5 / double /
+    multiple / at least / exactly.
+  - Satır ve sayfa sonları: widow/orphan control, keep with next, keep lines
+    together, page break before.
+  - Sekmeler: tab stops with position, alignment (left, center, right,
+    decimal) and leader (dots, dashes, line); the default tab interval.
+  - Kenarlık ve gölge: paragraph borders (any side, line style, width,
+    colour) and shading.
+- **Font** (Ctrl+D, or the new button in Giriş → Yazı Tipi):
+  - font, size and colour;
+  - bold, italic, underline, strikethrough and double strikethrough;
+  - superscript and subscript; small caps and all caps;
+  - character spacing (wider or tighter);
+  - a live preview.
+- **In a .udf**, options UYAP can't show (exact line spacing, page breaks,
+  borders, leaders, small caps…) are disabled with a note saying so, so nothing
+  silently disappears on save.
+- **Testing:** new smoke step `worddialogs` sets values in both dialogs, as a
+  user would, and checks the document. In a .udf it checks that the Word-only
+  options are disabled.

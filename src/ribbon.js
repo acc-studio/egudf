@@ -31,7 +31,7 @@ const TABS = {
     group('Yazı Tipi', col(
       `<select class="rsel font" data-input="fontFamily" title="Yazı tipi">${FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join('')}</select>`
         + `<select class="rsel size" data-input="fontSize" title="Yazı boyutu">${SIZES.map((s) => `<option>${s}</option>`).join('')}</select>`
-        + btn('growFont', 'growFont', 'Yazıyı büyüt (Ctrl+Shift+>)') + btn('shrinkFont', 'shrinkFont', 'Yazıyı küçült (Ctrl+Shift+<)') + btn('changeCaseMenu', 'case', 'Büyük/küçük harf (Shift+F3)') + btn('clearFormat', 'clear', 'Biçimi temizle (Ctrl+Space)'),
+        + btn('growFont', 'growFont', 'Yazıyı büyüt (Ctrl+Shift+>)') + btn('shrinkFont', 'shrinkFont', 'Yazıyı küçült (Ctrl+Shift+<)') + btn('changeCaseMenu', 'case', 'Büyük/küçük harf (Shift+F3)') + btn('clearFormat', 'clear', 'Biçimi temizle (Ctrl+Space)') + btn('fontDialog', 'font', 'Yazı tipi ayarları… (Ctrl+D)'),
       btn('bold', 'bold', 'Kalın (Ctrl+B)') + btn('italic', 'italic', 'İtalik (Ctrl+I)') + btn('underline', 'underline', 'Altı çizili (Ctrl+U)') + btn('strike', 'strike', 'Üstü çizili')
         + btn('subscript', 'sub', 'Alt simge') + btn('superscript', 'sup', 'Üst simge')
         + split('color', 'color', 'Yazı rengi', 'colorMenu', { cls: 'swatch-color' }) + split('highlight', 'highlight', 'Vurgu rengi', 'highlightMenu', { cls: 'swatch-hl' }),
