@@ -609,6 +609,27 @@ function insertPageBreak(tab) {
   ed.view.dispatch(ed.state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, pageBreakBefore: true }));
 }
 
+/**
+ * Giriş → Dönüştür: the other format as a new file, opened beside the original
+ * (which stays as it is). Word → .udf is what UYAP will show (uyapify).
+ */
+async function convertTo(tab, kind, forced = null) {
+  const base = tab.path ? stem(tab.path) : tab.title;
+  let path = forced || await native.saveDialog({ defaultPath: `${base}.${kind}`, kind });
+  if (!path) return;
+  if (!new RegExp(`\\.${kind}$`, 'i').test(path)) path += `.${kind}`;
+  let bytes;
+  if (kind === 'udf') {
+    const { doc, meta } = uyapifyDoc(tab.editor.getJSON(), tab.meta);
+    const xml = strToU8(serializeUdfXml(doc, meta));
+    bytes = writeUdf({ contentXml: xml, extra: await reviewEntries({ ...tab, meta }, doc, xml) });
+  } else bytes = exportDocx(tab.editor.getJSON(), tab.meta, tab.review);
+  await native.writeFile(path, bytes);
+  const opened = await openPath(path);
+  toast(`${kind === 'udf' ? 'UYAP belgesi' : 'Word belgesi'} oluşturuldu: ${path.split(/[\\/]/).pop()}`, { type: 'ok', ms: 4000 });
+  return opened;
+}
+
 /** Writes the tab as .docx to path. */
 async function saveDocx(tab, path, { quiet = false } = {}) {
   // overwriting the Word file we opened: say what would be lost, once
@@ -916,6 +937,11 @@ function backstage(section = 'new') {
         <div>İmza</div><div>${t.sig ? (t.sig.state === 'valid' ? `İmzalı — ${esc(t.sig.info?.signer?.subjectCN || '')}` : 'İmza geçersiz / eski') : 'İmzasız'}</div>
         <div>UYAP doğrulama</div><div>${t.original?.docProps ? 'Belgede UYAP doğrulama bilgisi var' : '—'}</div>
       </div>` : '<h1>Bilgi</h1><div class="bs-sub">Açık belge yok.</div>';
+      const up = app.update || {};
+      const upText = { off: 'Otomatik güncelleme yalnızca kurulu sürümde çalışır.', idle: 'Güncellemeler otomatik denetlenir.', checking: 'Denetleniyor…', current: 'egUDF güncel.', downloading: `Yeni sürüm indiriliyor${up.next ? ` (${up.next})` : ''}${up.percent != null ? ` · %${up.percent}` : ''}…`, downloaded: `${up.next} indirildi: egUDF kapanınca kurulur.`, error: 'Güncelleme denetlenemedi (internet bağlantısı?).' }[up.state || 'idle'];
+      main.insertAdjacentHTML('beforeend', `<h2 style="margin-top:28px">egUDF ${esc(up.version || '')}</h2><div class="bs-sub" id="bs-upd">${esc(upText)}</div><button class="btn" data-act="updCheck">${icon('refresh')}Güncellemeleri denetle</button>${up.state === 'downloaded' ? `<button class="btn primary" data-act="updInstall" style="margin-left:8px">Yeniden başlat ve kur</button>` : ''}`);
+      $('[data-act="updCheck"]', main).onclick = async () => { $('#bs-upd', main).textContent = 'Denetleniyor…'; const r = await native.update.check(); $('#bs-upd', main).textContent = { off: 'Otomatik güncelleme yalnızca kurulu sürümde çalışır.', current: 'egUDF güncel.', downloading: 'Yeni sürüm indiriliyor…', downloaded: `${r.next} indirildi: egUDF kapanınca kurulur.`, error: 'Güncelleme denetlenemedi (internet bağlantısı?).' }[r.state] || 'Denetleniyor…'; };
+      $('[data-act="updInstall"]', main)?.addEventListener('click', () => native.update.install());
       main.insertAdjacentHTML('beforeend', `<h2 style="margin-top:28px">Word belgeleri</h2><div class="bs-sub">egUDF .docx dosyalarını Word gibi açar ve kaydeder. Çift tıklayınca egUDF ile açılmaları için Windows'ta varsayılan uygulama yapın.</div><button class="btn" data-act="docxDefault">${icon('word')}.docx için varsayılan uygulama…</button>`);
       $('[data-act="docxDefault"]', main).onclick = () => native.defaultApps();
     } else {
@@ -1215,6 +1241,8 @@ async function runCmd(name, arg, el) {
     case 'save': if (tab) await save(tab); return;
     case 'insertFootnote': insertFootnote(tab); return;
     case 'insertToc': insertToc(tab); return;
+    case 'convertToUdf': if (tab) await convertTo(tab, 'udf'); return;
+    case 'convertToDocx': if (tab) await convertTo(tab, 'docx'); return;
     case 'updateToc': updateToc(tab); return;
     case 'pageBreak': insertPageBreak(tab); return;
     case 'saveAs': if (tab) await save(tab, { as: true }); return;
@@ -2156,8 +2184,18 @@ function smokeWordReview() {
 
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
+// ---- auto-update: notice once a new version is downloaded (installs when egUDF closes)
+let updateNoticeFor = null;
+native.update?.onStatus((st) => {
+  app.update = st;
+  if (st.state === 'downloaded' && st.next && updateNoticeFor !== st.next) {
+    updateNoticeFor = st.next;
+    toast(`egUDF ${st.next} indirildi. egUDF'i kapattığınızda kurulur.`, { type: 'ok', ms: 15000, actions: [{ label: 'Şimdi yeniden başlat', onClick: async () => { for (const t of app.tabs) if (isDirty(t) && !(await save(t))) return; native.update.install(); } }] });
+  }
+});
+
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'wordstyles', 'rulertabs', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'convert', 'wordstyles', 'rulertabs', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2300,6 +2338,25 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'convert': { // Giriş → Dönüştür: Word → .udf and .udf → Word, opened beside the original
+        const p = `${out}${sep}convert.docx`;
+        await native.writeFile(p, exportDocx(smokeWordDoc(), smokeWordMeta(), smokeWordReview()));
+        const w = await openPath(p);
+        await wait(300);
+        ribbon.show('home');
+        const btnUdf = !!document.querySelector('#ribbon [data-cmd="convertToUdf"]');
+        const u = await convertTo(w, 'udf', `${out}${sep}convert-out.udf`);
+        await wait(300);
+        const file = readUdf(await native.readFile(`${out}${sep}convert-out.udf`));
+        const lists = [...file.contentText.matchAll(/<paragraph\b[^>]*Numbered="true"[^>]*>/g)].map((m) => m[0]);
+        const udfOk = u?.format === 'udf' && lists.length === 3 && lists.every((l) => /SecListTypeLevel1=/.test(l) && !/FirstLineIndent="-/.test(l)) && w.format === 'docx' && app.tabs.includes(w);
+        ribbon.show('home');
+        const btnDocx = !!document.querySelector('#ribbon [data-cmd="convertToDocx"]');
+        const d = await convertTo(u, 'docx', `${out}${sep}convert-back.docx`);
+        await wait(300);
+        const docxOk = d?.format === 'docx' && /Taraflar/.test(docText(d.editor.getJSON()));
+        return { ok: btnUdf && btnDocx && udfOk && docxOk, btnUdf, btnDocx, udfOk, docxOk };
       }
       case 'wordstyles': { // Word documents: Başlık 1–3 are real Word headings
         const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });

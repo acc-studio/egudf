@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('native', {
   info: () => ipcRenderer.invoke('app:info'),
   defaultApps: () => ipcRenderer.invoke('app:defaultApps'),
   printPdf: (opts) => ipcRenderer.invoke('print:pdf', opts),
+  update: {
+    status: () => ipcRenderer.invoke('update:status'),
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onStatus: on('update:status'),
+  },
   officeFonts: () => ipcRenderer.invoke('fonts:office'),
   officeFontBytes: (file) => ipcRenderer.invoke('fonts:officeBytes', file),
   copyText: (t) => ipcRenderer.invoke('clipboard:writeText', t),

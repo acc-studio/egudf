@@ -56,6 +56,10 @@ const TABS = {
         + btn('align', 'alignRight', 'Sağa hizala (Ctrl+R)', { arg: 'right' }) + btn('align', 'alignJustify', 'İki yana yasla (Ctrl+J)', { arg: 'justify' })
         + btn('lineSpacingMenu', 'lineSpacing', 'Satır ve paragraf aralığı') + btn('firstLine', 'indent', 'İlk satır girintisi (1,25 cm)', { label: '' }) + btn('paragraphDialog', 'page', 'Paragraf ayarları…'),
     )),
+    group('Dönüştür', (ribbonApp?.active?.format === 'docx'
+      ? big('convertToUdf', 'udfDoc', 'UDF\'ye<br>dönüştür', { title: 'Bu Word belgesinin .udf sürümünü (UYAP\'ın göstereceği gibi) kaydedip açar' })
+      : big('convertToDocx', 'word', 'Word\'e<br>dönüştür', { title: 'Bu belgenin Word (.docx) kopyasını kaydedip açar' }))
+      + big('exportPdf', 'pdf', 'PDF olarak<br>kaydet')),
     group('Stiller', `<div class="gallery">${allStyles().map((s) => `<div class="gi ${s.user ? 'user' : ''}" data-cmd="style" data-arg="${esc(s.id)}" title="${esc(s.name)} stilini uygula"><div class="prev" style="${s.css || ''}">${esc(s.prev)}</div><div class="nm">${esc(s.name)}</div></div>`).join('')}</div>` + col(btn('styleSave', 'plus', 'Seçimin biçimini yeni stil olarak kaydet', { label: 'Stil kaydet' }), btn('styleManage', 'template', 'Kendi stillerinizi yönetin', { label: 'Stiller…' })), 'shrink'),
     group('Düzenleme', col(btn('find', 'search', 'Bul (Ctrl+F)', { label: 'Bul' }), btn('replace', 'replace', 'Değiştir (Ctrl+H)', { label: 'Değiştir' }), btn('selectAll', 'page', 'Tümünü seç (Ctrl+A)', { label: 'Tümünü seç' }))),
   ],

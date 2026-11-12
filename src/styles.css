@@ -551,3 +551,13 @@ body.printing .pg-mask { background: #fff !important; }
 .sheet:not(.word-hf) .udf-doc p.udf-p { min-height: round(up, calc(1.15em - 0.01pt), 1pt); }
 /* .udf tables: UYAP rows are just their lines (no vertical cell padding) */
 .sheet:not(.word-hf) .udf-doc td, .sheet:not(.word-hf) .udf-doc th { padding-top: 0; padding-bottom: 0; padding-left: 2pt; padding-right: 2pt; }
+
+/* ribbon header: compact signature / UYAP buttons, tinted (solid on hover) */
+#ribbon-head .btn { height: 24px; padding: 0 9px; gap: 5px; font-size: 12px; border-radius: 6px; margin-bottom: 3px; }
+#ribbon-head .btn .ic { width: 13px; height: 13px; }
+#ribbon-head .btn.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+#ribbon-head .btn.ok:hover:not(:disabled) { background: var(--ok); color: #fff; filter: none; }
+#ribbon-head .btn.primary { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); border-color: transparent; }
+#ribbon-head .btn.primary:hover:not(:disabled) { background: var(--accent); color: #fff; filter: none; }
+#ribbon-head .pill { padding: 2px 8px; font-size: 11.5px; margin-bottom: 3px; }
+#ribbon-head .pill .ic { width: 12px; height: 12px; }

@@ -1,6 +1,6 @@
 {
   "name": "egudf",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "egUDF — UYAP .udf editor with e-imza signing",
   "main": "main.js",
   "scripts": {
@@ -11,12 +11,14 @@
     "smoke:packaged": "npm run build && electron-builder --dir --publish never && release\\win-unpacked\\egUDF.exe --smoke=test/.pkg",
     "rebuild": "electron-rebuild -f -w pkcs11js",
     "dist": "npm run build && electron-builder --publish never",
-    "postinstall": "electron-rebuild -f -w pkcs11js"
+    "postinstall": "electron-rebuild -f -w pkcs11js",
+    "release": "npm run build && electron-builder --publish always"
   },
   "author": "Aziz Can Cengiz",
   "license": "MIT",
   "type": "module",
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "hunspell-asm": "^4.0.2",
     "pkcs11js": "^2.1.7"
   },
@@ -89,6 +91,14 @@
         "name": "UYAP Document",
         "description": "UYAP Doküman",
         "role": "Editor"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "acc-studio",
+        "repo": "egudf",
+        "releaseType": "release"
       }
     ]
   }

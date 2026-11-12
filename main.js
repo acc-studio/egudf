@@ -12,6 +12,7 @@ import { detectDrivers, listCertificates, signContent, friendlyError } from './s
 import { verifyDetached } from './sign/verify.js';
 import { createSpellService } from './lib/spellcheck.js';
 import { officeFonts, officeFontBytes } from './lib/officefonts.js';
+import { setupUpdater } from './lib/updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Spellcheck with the bundled Hunspell dictionaries in the renderer, not the
@@ -257,7 +258,11 @@ app.on('second-instance', (_e, args) => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  // packaged builds only; never in smoke runs
+  setupUpdater({ app, ipcMain, getWindow: () => win, enabled: app.isPackaged && SMOKE == null });
+});
 // With the Windows spellchecker active, Chromium can sit ~100s in shutdown
 // after the last window closes (and would keep the single-instance lock, so
 // the next double-clicked .udf would go nowhere). By now every document is

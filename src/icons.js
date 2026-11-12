@@ -13,6 +13,7 @@ const P = {
   theme: '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/>',
   toc: '<path d="M4 6h9M4 11h12M7 16h9"/><path d="M19 6h1M19 11h1M19 16h1" stroke-width="2.2"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  udfDoc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13v3a2 2 0 0 0 4 0v-3"/>',
   footnote: '<path d="M4 6h10M4 10h10M4 14h7"/><path d="M4 19h6" stroke-width="1.2"/><path d="M17 4v6M15.5 5.5 17 4l1.5 1.5"/>',
   pageBreak: '<path d="M6 3v6h12V3M6 21v-6h12v6"/><path d="M3 12h3M9 12h2M13 12h2M18 12h3"/>',
   font: '<path d="M4 20 10 4h2l6 16M7 14h8"/><path d="M18 4v6M15 7h6" stroke-width="1.4"/>',

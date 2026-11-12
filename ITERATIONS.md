@@ -849,3 +849,29 @@ tables; headings with spacing. Word documents keep Word's rules.
 - **Testing:** new smoke step `wordstyles` covers the gallery, the style id
   and outline level, the navigation pane, the saved Word style, and the .udf
   gallery coming back.
+
+## 0.32.0: Automatic updates, tidier header, quick conversions (iteration 31)
+
+- **Automatic updates:**
+  - egUDF checks for a new version shortly after it starts and every 4
+    hours. It downloads in the background and installs when you close
+    egUDF, with no admin prompt.
+  - A notice offers "Şimdi yeniden başlat" (unsaved documents are saved
+    first).
+  - Dosya → Bilgi shows the version and has "Güncellemeleri denetle".
+  - Releases are published on GitHub (acc-studio/egudf, now public).
+  - This version has to be installed by hand once; from then on updates
+    arrive by themselves.
+- **Tidier header:** the İmzala and UYAP'a gönder buttons and the signature
+  status are smaller and tinted, turning solid on hover, so they no longer
+  dominate the ribbon.
+- **Giriş → Dönüştür:**
+  - In a Word document, "UDF'ye dönüştür" saves the .udf version and opens it
+    beside the original. The .udf is what UYAP will show: lists, spacing and
+    tables adjusted, footnotes as end notes.
+  - In a .udf, "Word'e dönüştür" saves a .docx copy and opens it.
+  - "PDF olarak kaydet" sits next to them.
+  - The original stays open and unchanged.
+- **Testing:** new smoke step `convert` covers both directions, the
+  UYAP-ready list encoding in the .udf, and the ribbon button following the
+  document type.
