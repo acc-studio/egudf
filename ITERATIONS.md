@@ -442,3 +442,41 @@ you need a redline.
     real Word clipboard when Word data is on it, else a generated package.
   - 80 real .docx files round-trip (docx → docx → udf); the full smoke suite
     passes in the packaged exe.
+
+## 0.14.1: .udf files that look right in UYAP Doküman Editörü
+
+A Word document saved as .udf looked fine in egUDF, but in the official
+editor the bullets sat on top of the first letters. Everything here was
+checked by opening test files in the official editor (5.4.20, installed on this
+PC) and comparing screenshots.
+
+- **Bullets no longer overlap the text:** UYAP draws a bullet ~12 pt left of
+  the paragraph's left indent and ignores a negative first-line indent. Word's
+  hanging lists (left 36, first line −18) therefore put the bullet on the
+  first word. egUDF now writes list paragraphs without the hanging part. UYAP
+  then shows Word's layout: label in the margin, every line of text aligned.
+- **Correct bullet and number styles in UYAP:**
+  - egUDF wrote some list style names UYAP doesn't know. They are now taken
+    from the editor itself (its program files).
+  - Fixed names: "1)" (`…PARANTHESE`), "a." / "A." (`…CHAR_…`).
+  - New styles: "(1)", "(a)", □, ◆, ➤.
+  - UYAP has no dash bullet: Word's "–" lists become ●.
+  - At levels 2 and deeper UYAP ignored the chosen bullet and drew its own
+    (■ □ ◆ ➤ ►; a. i. (1)…). egUDF now spells out each level's style
+    (`SecListTypeLevelN`), so a Word level-2 "•" stays "•".
+- **egUDF shows .udf lists as UYAP does:** labels hang left of the text,
+  numbers are right-aligned, each level uses UYAP's default style when a file
+  doesn't name one, and labels take the size of the item's text. Before,
+  real UYAP files with sub-levels showed "1." where UYAP shows "a.".
+- **Word → .udf:** "Farklı kaydet → .udf", signing a Word document and pasting
+  Word content into a .udf adjust lists right away, so egUDF shows what UYAP
+  will show.
+- **Word export:** each list is one multi-level Word list with the right style
+  per level (sub-items restart correctly).
+- **Known UYAP quirk (not fixable from the file):** when a numbered item's first
+  line moves to the next page, UYAP leaves the number alone at the bottom of
+  the previous page.
+- **Testing:**
+  - A unit test pins the rules above.
+  - Real UYAP files still re-save identically.
+  - Older egUDF files with hanging lists are repaired on the first re-save.

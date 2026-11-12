@@ -207,7 +207,14 @@ body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar {
 .sheet.word-hf p.udf-imgline { line-height: 0; min-height: 0; }
 .sheet.word-hf p.udf-p { padding-top: 0; padding-bottom: 0; margin-top: var(--sa, 0); margin-bottom: var(--sb, 0); }
 .sheet.word-hf .udf-doc .tableWrapper { overflow: visible; }
-.udf-doc p.udf-p[data-label]::before { content: attr(data-label); display: inline-block; min-width: var(--lw, 18pt); text-indent: 0; white-space: pre; }
+.udf-doc p.udf-p[data-label]::before { content: attr(data-label); font-size: var(--lfs, 1em); display: inline-block; min-width: var(--lw, 18pt); text-indent: 0; white-space: pre; }
+/* .udf documents: lists as UYAP Doküman Editörü draws them — the label hangs in the
+   space left of LeftIndent, text (every line) starts at LeftIndent */
+.sheet:not(.word-hf) .udf-doc p.udf-p[data-label]::before { min-width: 18pt; width: 18pt; margin-left: -18pt; }
+/* UYAP right-aligns numbers just before the text ("i." / "ii." line up), bullets sit left */
+.sheet:not(.word-hf) .udf-doc p.udf-p[data-kind="number"]::before { width: auto; min-width: 0; margin-left: 0; position: absolute; transform: translateX(calc(-100% - 4pt)); }
+.sheet:not(.word-hf) .udf-doc p.udf-p[data-kind="number"] { position: relative; }
+.sheet:not(.word-hf) .udf-doc p.udf-p[data-hang] { text-indent: 0 !important; }
 .udf-doc .page-spacer { display: block; width: 0; text-indent: 0; user-select: none; }
 .udf-doc .udf-field { background: rgba(59, 111, 245, 0.09); border-bottom: 1px dotted rgba(59,111,245,.6); }
 .udf-doc img.udf-img { vertical-align: bottom; max-width: 100%; }

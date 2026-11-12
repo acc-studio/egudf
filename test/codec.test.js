@@ -102,9 +102,14 @@ const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.toLowerCa
 test(`real UYAP files: parse → serialize → parse is stable (${files.length} files)`, { skip: !files.length && 'no samples' }, () => {
   for (const f of files) {
     const { contentText } = readUdf(fs.readFileSync(path.join(dir, f)));
-    const first = parseUdfXml(contentText);
+    let first = parseUdfXml(contentText);
+    // .udf files written by egUDF ≤ 0.14.0 could hold Word-style hanging lists, which UYAP
+    // draws with the bullet over the text: the first re-save repairs them, then it is stable
+    const hanging = (d) => JSON.stringify(d).match(/"firstLineIndent":-[^}]*"list":\{/g)?.length || 0;
+    if (hanging(first.doc)) first = parseUdfXml(serializeUdfXml(first.doc, first.meta));
     const xml2 = serializeUdfXml(first.doc, first.meta);
     const second = parseUdfXml(xml2);
+    assert.equal(hanging(second.doc), 0, `${f}: a list paragraph keeps a hanging indent (UYAP draws its bullet over the text)`);
     assert.deepEqual(second.doc, first.doc, `${f}: body changed on re-save`);
     assert.deepEqual(second.meta.header?.content, first.meta.header?.content, `${f}: header changed`);
     assert.deepEqual(second.meta.footer?.content, first.meta.footer?.content, `${f}: footer changed`);
@@ -115,5 +120,31 @@ test(`real UYAP files: parse → serialize → parse is stable (${files.length} 
     const all = [first.meta.header?.content, first.doc.content, first.meta.footer?.content]
       .filter(Boolean).map((c) => docText({ type: 'doc', content: c })).join('');
     assert.equal(strip(all).length, strip(orig).length, `${f}: text length differs`);
+    void xml2;
   }
+});
+
+// What UYAP Doküman Editörü 5.4.20 draws (checked by opening test files in it):
+// bullets sit ~12pt left of LeftIndent whatever FirstLineIndent says; the style at
+// level N is SecListTypeLevelN, else level defaults; there is no dash bullet.
+test('lists are written the way UYAP Doküman Editörü draws them', () => {
+  const P = (list, extra = {}) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), leftIndent: 36, firstLineIndent: -18, ...extra, list }, content: [{ type: 'text', text: 'Madde' }] });
+  const doc = { type: 'doc', content: [
+    P({ kind: 'bullet', type: 'BULLET_TYPE_DASH', id: '1', level: 1 }),
+    P({ kind: 'bullet', type: 'BULLET_TYPE_ELLIPSE', id: '1', level: 2 }),
+    P({ kind: 'number', type: 'NUMBER_TYPE_NUMBER_PARANTEZ', id: '2', level: 1 }),
+    P({ kind: 'number', type: 'NUMBER_TYPE_LETTER_SMALL_DOT', id: '2', level: 2 }),
+  ] };
+  const xml = serializeUdfXml(doc, newDocMeta());
+  const paras = [...xml.matchAll(/<paragraph\b([^>]*)>/g)].map((m) => m[1]);
+  assert.ok(paras.every((a) => !/FirstLineIndent="-/.test(a)), 'no hanging indent on list paragraphs');
+  assert.match(paras[0], /BulletType="BULLET_TYPE_ELLIPSE"/); // no dash bullet in UYAP
+  assert.match(paras[1], /SecListTypeLevel2="BULLET_TYPE_ELLIPSE"/); // else UYAP draws ■ at level 2
+  assert.match(paras[2], /NumberType="NUMBER_TYPE_NUMBER_PARANTHESE"/);
+  assert.match(paras[3], /SecListTypeLevel2="NUMBER_TYPE_CHAR_SMALL_DOT"/);
+  // reading back: the style per level, UYAP's defaults where a file says nothing
+  const back = parseUdfXml(xml).doc.content.map((p) => p.attrs.list.type);
+  assert.deepEqual(back, ['BULLET_TYPE_ELLIPSE', 'BULLET_TYPE_ELLIPSE', 'NUMBER_TYPE_NUMBER_PARANTHESE', 'NUMBER_TYPE_CHAR_SMALL_DOT']);
+  const native = parseUdfXml(xml.replace(/ SecListTypeLevel\d="[^"]*"/g, '')).doc.content.map((p) => listLabel(p.attrs.list.kind, p.attrs.list.type, 1));
+  assert.deepEqual(native, ['•', '■', '1)', 'a.']);
 });

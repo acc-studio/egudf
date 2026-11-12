@@ -63,7 +63,7 @@ test('docx export is a valid package and imports back with formatting', () => {
   assert.equal(c[2].attrs.lineSpacing, 0.5);
   assert.equal(c[2].attrs.firstLineIndent, 35.4);
   assert.ok(c[2].content.find((n) => n.text === 'vurgulu').marks.some((m) => m.type === 'highlight'));
-  assert.deepEqual({ kind: c[3].attrs.list.kind, type: c[3].attrs.list.type, level: c[3].attrs.list.level }, { kind: 'number', type: 'NUMBER_TYPE_NUMBER_PARANTEZ', level: 1 });
+  assert.deepEqual({ kind: c[3].attrs.list.kind, type: c[3].attrs.list.type, level: c[3].attrs.list.level }, { kind: 'number', type: 'NUMBER_TYPE_NUMBER_PARANTHESE', level: 1 });
   assert.equal(c[4].attrs.list.kind, 'bullet');
   assert.equal(c[4].attrs.list.level, 2);
   assert.ok(c[5].content[0].marks.some((m) => m.type === 'insertion' && m.attrs.author === 'Av. Ayşe'));

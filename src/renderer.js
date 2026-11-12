@@ -6,7 +6,7 @@ import { readUdf, writeUdf, strToU8 } from './udf/zip.js';
 import { udfXmlToPdf } from './udf/pdf.js';
 import { mergeTemplateData } from './udf/template-data.js';
 import { TEMPLATES, BLOCKS } from './udf/templates.js';
-import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes } from './udf/common.js';
+import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes, uyapListType } from './udf/common.js';
 import { icon } from './icons.js';
 import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate, promptBox } from './ui.js';
 import { DEFAULT_AUTOCORRECT } from './editor/autocorrect.js';
@@ -446,6 +446,30 @@ async function ensureFonts(tab) {
 }
 app.ensureFonts = ensureFonts;
 
+/**
+ * Make a document's lists what UYAP Doküman Editörü will show once saved as .udf:
+ * no hanging indent on list paragraphs, only list styles UYAP has. Used when a Word
+ * document becomes a .udf and when Word content is pasted into a .udf, so egUDF
+ * shows the same as the official editor. Not an undo step, not a tracked change.
+ */
+function uyapNormalize(tab) {
+  const ed = tab.editor;
+  const tr = ed.state.tr;
+  ed.state.doc.descendants((node, pos) => {
+    const l = node.type.name === 'paragraph' && node.attrs.list;
+    if (!l) return true;
+    const type = uyapListType(l.kind, l.type);
+    const fli = Math.max(0, node.attrs.firstLineIndent || 0);
+    if (type !== l.type || fli !== (node.attrs.firstLineIndent || 0)) tr.setNodeMarkup(pos, null, { ...node.attrs, firstLineIndent: fli, list: { ...l, type } });
+    return false;
+  });
+  if (!tr.docChanged) return false;
+  tr.setMeta('addToHistory', false).setMeta('trackSkip', true);
+  ed.view.dispatch(tr);
+  return true;
+}
+app.uyapNormalize = uyapNormalize;
+
 /** Writes the tab as .docx to path. */
 async function saveDocx(tab, path, { quiet = false } = {}) {
   // overwriting the Word file we opened: say what would be lost, once
@@ -483,6 +507,7 @@ async function pasteFromWord(tab, html, text) {
   try {
     if (pkg) {
       const r = pasteDocx(tab.editor, pkg, { text, base: tab.meta.base, review: tab.review });
+      if (tab.format !== 'docx') uyapNormalize(tab); // pasted into a .udf: lists as UYAP will draw them
       if (r.comments) { renderReview(app); showPane(app, true); }
       ensureFonts(tab);
       return r;
@@ -551,6 +576,7 @@ async function save(tab, { as = false, quiet = false, path: forced = null } = {}
     tab.format = 'udf';
     tab.original = null;
     tab.dirty = true;
+    uyapNormalize(tab);
     applyGeometry(tab);
     tab.editor.commands.repaginate();
   }
@@ -594,7 +620,7 @@ app.signTab = async (tab, req) => {
     if (!path) return { error: 'Kaydetme iptal edildi.' };
     if (!/\.udf$/i.test(path)) path += '.udf';
   }
-  if (tab.format === 'docx') { tab.format = 'udf'; tab.dirty = true; applyGeometry(tab); }
+  if (tab.format === 'docx') { tab.format = 'udf'; tab.dirty = true; uyapNormalize(tab); applyGeometry(tab); }
   const xml = contentBytes(tab);
   const r = await native.sign.sign({ ...req, content: xml });
   if (!r.ok) return { error: r.error };

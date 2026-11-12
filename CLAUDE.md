@@ -22,6 +22,11 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
 - Export writes explicit `family`+`size` on every run and drops `resolver`, so output never depends on style resolution. Imported tables carry a grid fingerprint (`_sig`); if unchanged, original `columnCount/columnSpans` are written back verbatim.
 - **Unmerged UYAP forms** (e.g. takip talebi from the portal): CDATA holds placeholder field names and the values sit in `<data>`. `src/udf/template-data.js` merges them on open and before PDF export (rules in its header; digits in data tag names are encoded `Tablo40`→`TabloXeXa`; `dataRow` rows repeat per data instance). Signing an unchanged file still signs the original template bytes; editing + saving writes the merged, ordinary document.
 - Rows may carry their own `columnSpans` that differ from the table's (`100,5,100` ×3 vs rows `91,109` ×2). Use the row grid when its count matches the cells.
+- **Lists in UYAP:** checked in Doküman Editörü 5.4.20, which is installed at `C:\Uyap\Uyap Kelime Islemci`. To test there, open a file and screenshot it with PowerShell PrintWindow.
+  - **Bullets** sit ~12pt left of LeftIndent and ignore FirstLineIndent, so never write a negative FirstLineIndent on a list paragraph.
+  - **Style names** are UYAP's own (from editor_lib.jar): `BULLET_TYPE_{ELLIPSE,RECTANGLE,RECTANGLE_D,DIAMOND,DIAMOND_2,ARROW,TRIANGLE}` and `NUMBER_TYPE_{NUMBER,CHAR_SMALL,CHAR_BIG,ROMAN_SMALL,ROMAN_BIG}_{DOT,TRE,PARANTHESE,D_PARANTHESE}`. There is no dash.
+  - **Per level:** the style at level N is `SecListTypeLevelN`; otherwise the type at level 1, and the defaults at deeper levels: a. i. (1) (a) (i) for numbers, ■ □ ◆ ➤ ► for bullets.
+  - All of this lives in `src/udf/common.js` (`uyapLevelType`, `uyapListType`).
 - `npm test` asserts parse→serialize→parse idempotency over all real samples; keep it green when touching `src/udf/codec.js`.
 
 ## Review data, interop, comfort (0.2–0.7, see ITERATIONS.md)

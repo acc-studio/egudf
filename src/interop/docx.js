@@ -13,7 +13,7 @@
 import { readPageNumber, writePageNumber } from '../udf/pagenum.js';
 import { DOMParser } from '@xmldom/xmldom';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
-import { listLabel, A4 } from '../udf/common.js';
+import { listLabel, A4, uyapLevelType } from '../udf/common.js';
 import { defaultParaAttrs, newDocMeta, cssSizeToPt } from '../udf/codec.js';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -28,11 +28,12 @@ const NUMFMT = (type) => {
   const t = String(type || '');
   if (/ROMAN_BIG|ROMAN_UPPER/.test(t)) return 'upperRoman';
   if (/ROMAN/.test(t)) return 'lowerRoman';
-  if (/(LETTER|ALPHA)_(BIG|UPPER)/.test(t)) return 'upperLetter';
-  if (/LETTER|ALPHA/.test(t)) return 'lowerLetter';
+  if (/(CHAR|LETTER|ALPHA)_(BIG|UPPER)/.test(t)) return 'upperLetter';
+  if (/CHAR|LETTER|ALPHA/.test(t)) return 'lowerLetter';
   return 'decimal';
 };
-const NUMSUFFIX = (type) => (/TRE|DASH/.test(type) ? '-' : /PARAN|PARENT/.test(type) ? ')' : '.');
+/** Word lvlText for level i (0-based): "%1." "%1)" "(%1)" "%1-" */
+const LVLTEXT = (type, i) => (/D_PARANTHESE/.test(type) ? `(%${i + 1})` : `%${i + 1}${/TRE|DASH/.test(type) ? '-' : /PARAN|PARENT/.test(type) ? ')' : '.'}`);
 
 export function exportDocx(doc, meta = newDocMeta(), review = null) {
   const base = meta.base || { family: 'Times New Roman', size: 12 };
@@ -149,9 +150,12 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     if (a.keepNext) s += '<w:keepNext/>';
     if (a.pageBreakBefore) s += '<w:pageBreakBefore/>';
     if (a.list) {
-      const key = `${a.list.kind}|${a.list.type}|${a.list.id}`;
-      if (!lists.has(key)) lists.set(key, { numId: lists.size + 1, kind: a.list.kind, type: a.list.type });
-      s += `<w:numPr><w:ilvl w:val="${Math.max(0, (a.list.level || 1) - 1)}"/><w:numId w:val="${lists.get(key).numId}"/></w:numPr>`;
+      // one multi-level Word list per list id, each level with the style its paragraphs use
+      const key = `${a.list.kind}|${a.list.id}`;
+      if (!lists.has(key)) lists.set(key, { numId: lists.size + 1, kind: a.list.kind, levels: {} });
+      const lvl = Math.max(0, (a.list.level || 1) - 1);
+      lists.get(key).levels[lvl] ??= a.list.type;
+      s += `<w:numPr><w:ilvl w:val="${lvl}"/><w:numId w:val="${lists.get(key).numId}"/></w:numPr>`;
     }
     const bd = a.border || {};
     const sides = ['top', 'left', 'bottom', 'right'].filter((k) => bd[k] && bd[k] !== 'none');
@@ -310,8 +314,10 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       let lv = '';
       for (let i = 0; i < 9; i++) {
         const left = 360 * (i + 1) + 360;
-        if (l.kind === 'bullet') lv += `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="${x(listLabel('bullet', l.type, 1))}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${left}" w:hanging="360"/></w:pPr></w:lvl>`;
-        else lv += `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${NUMFMT(l.type)}"/><w:lvlText w:val="%${i + 1}${NUMSUFFIX(l.type)}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${left}" w:hanging="360"/></w:pPr></w:lvl>`;
+        // levels no paragraph uses get UYAP's defaults for that level
+        const type = l.levels[i] || uyapLevelType(l.kind, i + 1, l.levels[0], null);
+        if (l.kind === 'bullet') lv += `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="${x(listLabel('bullet', type, 1))}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${left}" w:hanging="360"/></w:pPr></w:lvl>`;
+        else lv += `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${NUMFMT(type)}"/><w:lvlText w:val="${LVLTEXT(type, i)}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${left}" w:hanging="360"/></w:pPr></w:lvl>`;
       }
       abs += `<w:abstractNum w:abstractNumId="${l.numId}"><w:multiLevelType w:val="hybridMultilevel"/>${lv}</w:abstractNum>`;
       nums += `<w:num w:numId="${l.numId}"><w:abstractNumId w:val="${l.numId}"/></w:num>`;
@@ -466,17 +472,22 @@ export function importDocx(bytes, opts = {}) {
   }
   const listType = (fmt, text) => {
     if (fmt === 'bullet' || fmt === 'none') {
-      if (/[▪■]/.test(text)) return { kind: 'bullet', type: 'BULLET_TYPE_RECTANGLE' };
-      if (/[►▶]/.test(text)) return { kind: 'bullet', type: 'BULLET_TYPE_TRIANGLE' };
-      if (/[–-]/.test(text)) return { kind: 'bullet', type: 'BULLET_TYPE_DASH' };
-      return { kind: 'bullet', type: 'BULLET_TYPE_ELLIPSE' };
+      // Word's bullets are often Symbol/Wingdings private-use characters (U+F0xx)
+      const B = (t) => ({ kind: 'bullet', type: `BULLET_TYPE_${t}` });
+      if (/[▪■]/.test(text)) return B('RECTANGLE');
+      if (/[□▫❑]/.test(text)) return B('RECTANGLE_D');
+      if (/[◆♦❖]/.test(text)) return B('DIAMOND');
+      if (/[➤➢➔→]/.test(text)) return B('ARROW');
+      if (/[►▶]/.test(text)) return B('TRIANGLE');
+      if (/[✓✔]/.test(text)) return B('CHECK'); // Word only (UYAP: ●)
+      if (/^[o○◦]$/.test(text.trim())) return B('CIRCLE'); // Word only (UYAP: □)
+      if (/[–—-]/.test(text)) return B('DASH'); // Word only (UYAP: ●)
+      return B('ELLIPSE');
     }
-    const suffix = /\)\s*$/.test(text) ? 'PARANTEZ' : /-\s*$/.test(text) ? 'TRE' : 'DOT';
-    if (fmt === 'upperRoman') return { kind: 'number', type: 'NUMBER_TYPE_ROMAN_BIG_DOT' };
-    if (fmt === 'lowerRoman') return { kind: 'number', type: 'NUMBER_TYPE_ROMAN_SMALL_DOT' };
-    if (fmt === 'upperLetter') return { kind: 'number', type: 'NUMBER_TYPE_LETTER_BIG_DOT' };
-    if (fmt === 'lowerLetter') return { kind: 'number', type: 'NUMBER_TYPE_LETTER_SMALL_DOT' };
-    return { kind: 'number', type: `NUMBER_TYPE_NUMBER_${suffix}` };
+    // "(1)" → D_PARANTHESE, "1)" → PARANTHESE, "1-" → TRE, else DOT (UYAP's names)
+    const suffix = /^\s*\(.*\)\s*$/.test(text) ? 'D_PARANTHESE' : /\)\s*$/.test(text) ? 'PARANTHESE' : /-\s*$/.test(text) ? 'TRE' : 'DOT';
+    const core = { upperRoman: 'ROMAN_BIG', lowerRoman: 'ROMAN_SMALL', upperLetter: 'CHAR_BIG', lowerLetter: 'CHAR_SMALL' }[fmt] || 'NUMBER';
+    return { kind: 'number', type: `NUMBER_TYPE_${core}_${suffix}` };
   };
 
   // ---- base font from docDefaults / Normal

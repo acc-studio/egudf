@@ -21,11 +21,11 @@
 // resolution order. Field runs (<field fieldName…>) and unknown attributes are
 // carried through so UYAP form templates keep working.
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { ALIGN, IMAGE_CHAR, PT_TO_PX, javaToHex, hexToJava, jfloat, num, imageMime } from './common.js';
+import { ALIGN, IMAGE_CHAR, PT_TO_PX, javaToHex, hexToJava, jfloat, num, imageMime, uyapLevelType, uyapListType } from './common.js';
 
 const CHAR_KEYS = new Set(['family', 'size', 'bold', 'italic', 'underline', 'strikethrough', 'foreground', 'background', 'subscript', 'superscript']);
 const PARA_NUM = [['LeftIndent', 'leftIndent'], ['RightIndent', 'rightIndent'], ['FirstLineIndent', 'firstLineIndent'], ['Hanging', 'hanging'], ['SpaceAbove', 'spaceAbove'], ['SpaceBelow', 'spaceBelow'], ['LineSpacing', 'lineSpacing']];
-const LIST_KEYS = ['Numbered', 'Bulleted', 'NumberType', 'BulletType', 'ListId', 'ListLevel'];
+const LIST_KEYS = ['Numbered', 'Bulleted', 'NumberType', 'BulletType', 'ListId', 'ListLevel', ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `SecListTypeLevel${n}`)];
 const PARA_KEYS = new Set(['Alignment', 'TabSet', ...PARA_NUM.map((p) => p[0]), ...LIST_KEYS]);
 const STYLE_ONLY = new Set(['resolver', 'description', 'name', 'FONT_ATTRIBUTE_KEY']);
 const RUN_POS = new Set(['startOffset', 'length']);
@@ -155,12 +155,10 @@ function paraAttrsFrom(eff, own) {
   a.tabSet = eff.TabSet || null;
   if (eff.Numbered === 'true' || eff.Bulleted === 'true') {
     const numbered = eff.Numbered === 'true';
-    a.list = {
-      kind: numbered ? 'number' : 'bullet',
-      type: numbered ? (eff.NumberType || 'NUMBER_TYPE_NUMBER_DOT') : (eff.BulletType || 'BULLET_TYPE_ELLIPSE'),
-      id: String(eff.ListId || '1'),
-      level: parseInt(eff.ListLevel || '1', 10) || 1,
-    };
+    const kind = numbered ? 'number' : 'bullet';
+    const level = parseInt(eff.ListLevel || '1', 10) || 1;
+    // what UYAP shows: SecListTypeLevelN, else the type (level 1) or its level default
+    a.list = { kind, type: uyapLevelType(kind, level, numbered ? eff.NumberType : eff.BulletType, eff[`SecListTypeLevel${level}`]), id: String(eff.ListId || '1'), level };
   }
   const extra = omit(own, PARA_KEYS, CHAR_KEYS, STYLE_ONLY);
   a.extra = Object.keys(extra).length ? extra : null;
@@ -356,12 +354,19 @@ function flattenInline(n) {
 function paraXmlAttrs(a = {}) {
   const o = { Alignment: String(Math.max(0, ALIGN.indexOf(a.align || 'left'))) };
   for (const [k, n] of PARA_NUM) if (a[n]) o[k] = jfloat(a[n]);
+  // UYAP draws a bullet ~12pt left of LeftIndent whatever FirstLineIndent says, so a
+  // Word-style hanging list (LeftIndent 36, FirstLineIndent -18) puts the bullet on
+  // the first word. Without the hanging part UYAP shows Word's layout: label in the
+  // margin, every line of text at LeftIndent. (Verified in Doküman Editörü 5.4.20.)
+  if (a.list && (a.firstLineIndent || 0) < 0) delete o.FirstLineIndent;
   if (a.tabSet) o.TabSet = a.tabSet;
   if (a.list) {
-    if (a.list.kind === 'number') { o.Numbered = 'true'; o.NumberType = a.list.type || 'NUMBER_TYPE_NUMBER_DOT'; }
-    else { o.Bulleted = 'true'; o.BulletType = a.list.type || 'BULLET_TYPE_ELLIPSE'; }
+    // only names UYAP knows, and the level's style spelled out (UYAP otherwise uses its own per-level default)
+    const type = uyapListType(a.list.kind, a.list.type);
+    if (a.list.kind === 'number') { o.Numbered = 'true'; o.NumberType = type; } else { o.Bulleted = 'true'; o.BulletType = type; }
     o.ListLevel = String(a.list.level || 1);
     o.ListId = String(a.list.id || 1);
+    o[`SecListTypeLevel${a.list.level || 1}`] = type;
   }
   return { ...o, ...(a.extra || {}) };
 }

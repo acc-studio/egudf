@@ -356,7 +356,11 @@ export function computeListLabels(doc) {
     counters.set(l.id, c);
     const label = listLabel(l.kind, l.type, c[lvl - 1]);
     const width = Math.max(14, -(node.attrs.firstLineIndent || 0));
-    decos.push(Decoration.node(pos, pos + node.nodeSize, { 'data-label': label, style: `--lw:${width}pt` }));
+    // the label takes the size of the item's text (as UYAP and Word draw it), not the base font
+    const fs0 = node.firstChild?.marks?.find((m) => m.type.name === 'textStyle')?.attrs?.fontSize;
+    const lfs = fs0 ? `;--lfs:${fs0}` : '';
+    // data-hang: a Word-style hanging list; .udf documents show it as UYAP will (no hang)
+    decos.push(Decoration.node(pos, pos + node.nodeSize, { 'data-label': label, 'data-kind': l.kind, style: `--lw:${width}pt${lfs}`, ...((node.attrs.firstLineIndent || 0) < 0 ? { 'data-hang': '' } : {}) }));
     return false;
   });
   return DecorationSet.create(doc, decos);
