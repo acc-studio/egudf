@@ -246,8 +246,12 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
         else maxSize = Math.max(maxSize, it.size);
       }
       l.ascent = Math.max(imgH, maxSize * 0.891);
-      // UYAP adds LineSpacing × font size per line (not a multiple of the line height)
-      l.height = Math.max(imgH + maxSize * 0.25, maxSize * 1.15) + lineSpacing * maxSize;
+      // UYAP's pitch (measured): h = ceil(size × 1.15) pt, plus 2 × floor(LineSpacing × h / 2),
+      // half of it above the text and half below
+      const hLine = Math.ceil(maxSize * 1.15 - 1e-6);
+      const half = Math.floor((lineSpacing * hLine) / 2 + 1e-6);
+      l.height = Math.max(imgH + maxSize * 0.25, hLine) + 2 * half;
+      l.ascent += half;
       const slack = l.avail - used;
       let shift = 0;
       if (align === 1) shift = slack / 2;
@@ -301,7 +305,7 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
       for (let c = 0; c < cellEls.length; c++) {
         const w = rowW ? rowW[c] : colW[Math.min(c, cols - 1)];
         const blocks = await layoutBlocks(cellEls[c], w - 4);
-        const ch = blocksHeight(blocks) + 4;
+        const ch = blocksHeight(blocks); // UYAP rows have no vertical cell padding
         cells.push({ x, w, blocks });
         h = Math.max(h, ch);
         x += w;

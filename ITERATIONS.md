@@ -783,3 +783,26 @@ it.
   with spacing; mixed lists and tables) now have the same page count in egUDF
   as in the official editor: 5, 5 and 3. Before, the 1.5-spaced one was 6
   pages in egUDF and 5 in UYAP.
+
+## 0.28.0: UYAP's exact line pitch and table rows (iteration 27)
+
+0.27 fixed 1.5 spacing. A wider check then found double spacing and other
+fonts still off, and tables too tall. I measured eight font/spacing
+combinations in the official editor. Its rule, which fits all eight to the
+point:
+
+- A line is its font size × 1.15, rounded **up to a whole point**.
+- Line spacing adds that line × the spacing, rounded **down** to whole points
+  and split evenly above and below the text.
+- 12 pt Times: single 14 pt, 1.5 lines 20 pt, double 28 pt. 14 pt Arial:
+  single 17 pt, 1.5 lines 25 pt, double 33 pt.
+- **Table rows** are just their lines: UYAP adds no cell padding, so egUDF's
+  table rows (and its PDF's) were a quarter too tall. A 90-row table took 3
+  pages in egUDF and 2 in UYAP.
+
+egUDF's view of a .udf and its PDF now follow this rule exactly. Page counts
+match UYAP on all seven test documents: single, 1.5 and double spacing; 11,
+12 and 14 pt; Times and Arial; a header and footer with page numbers; lists;
+tables; headings with spacing. Word documents keep Word's rules.
+
+- **Testing:** new smoke step `udfpitch` pins the eight measured pitches.

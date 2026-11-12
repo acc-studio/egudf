@@ -536,6 +536,14 @@ img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: 
 .pg-mask { position: absolute; left: -2px; right: -2px; background: #fff; }
 body.printing .pg-mask { background: #fff !important; }
 
-/* .udf: UYAP adds LineSpacing × font size to each line (measured in Doküman Editörü 5.4.20:
-   12 pt Times, LineSpacing 0.5 → 20 pt pitch, 1.0 → 26 pt), not a multiple of the line */
-.sheet:not(.word-hf) .udf-doc p.udf-p, .sheet:not(.word-hf) .pg-header p.udf-p, .sheet:not(.word-hf) .pg-footer p.udf-p { line-height: calc(var(--lhf, 1.15) + var(--lsx, 0)); }
+/* .udf: UYAP's line pitch (measured in Doküman Editörü 5.4.20, 8 font/spacing cases):
+   h = ceil(size × 1.15) in whole points, plus 2 × floor(LineSpacing × h / 2) — half the
+   spacing above the text, half below. Per run, so the largest font on a line sets it. */
+.sheet:not(.word-hf) .udf-doc p.udf-p, .sheet:not(.word-hf) .pg-header p.udf-p, .sheet:not(.word-hf) .pg-footer p.udf-p,
+.sheet:not(.word-hf) .udf-doc p.udf-p span, .sheet:not(.word-hf) .udf-doc p.udf-p a {
+  /* ±0.01pt: pixel floating point must not push an exact value to the next point */
+  line-height: calc(round(up, calc(1.15em - 0.01pt), 1pt) + 2 * round(down, calc(var(--lsx, 0) * round(up, calc(1.15em - 0.01pt), 1pt) / 2 + 0.01pt), 1pt));
+}
+.sheet:not(.word-hf) .udf-doc p.udf-p { min-height: round(up, calc(1.15em - 0.01pt), 1pt); }
+/* .udf tables: UYAP rows are just their lines (no vertical cell padding) */
+.sheet:not(.word-hf) .udf-doc td, .sheet:not(.word-hf) .udf-doc th { padding-top: 0; padding-bottom: 0; padding-left: 2pt; padding-right: 2pt; }
