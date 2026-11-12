@@ -2,6 +2,9 @@
 // markers for the paragraph(s) in the selection (first line ▽, left/hanging △
 // with a box that moves both, right △), tab stops of the current paragraph.
 // Drags snap to 0,25 cm (hold Alt for free movement) and apply on release.
+// Tab stops as in Word: the corner button picks the type (left, center, right,
+// decimal); a click on the scale adds a stop, a stop drags to move, and dragging
+// it off the ruler removes it.
 import { PT_TO_PX } from './udf/common.js';
 
 const CM_PX = 28.3465 * PT_TO_PX;
@@ -9,12 +12,28 @@ const CM_PX = 28.3465 * PT_TO_PX;
 export function createRuler(app, tab) {
   const el = document.createElement('div');
   el.className = 'ruler';
-  el.innerHTML = '<div class="ruler-inner"><svg class="ruler-scale"></svg><div class="rh rh-first" title="İlk satır girintisi"></div><div class="rh rh-hang" title="Asılı girinti"></div><div class="rh rh-left" title="Sol girinti"></div><div class="rh rh-right" title="Sağ girinti"></div><div class="ruler-tabs"></div></div>';
+  el.innerHTML = '<div class="ruler-inner"><button class="ruler-tabtype" data-t="0" title="Sekme türü: Sol (tıklayınca değişir)">⌊</button><svg class="ruler-scale"></svg><div class="rh rh-first" title="İlk satır girintisi"></div><div class="rh rh-hang" title="Asılı girinti"></div><div class="rh rh-left" title="Sol girinti"></div><div class="rh rh-right" title="Sağ girinti"></div><div class="ruler-tabs"></div></div>';
   tab.host.prepend(el);
-  const inner = el.firstElementChild;
+  const inner = el.querySelector('.ruler-inner');
   const svg = inner.querySelector('svg');
   const h = { first: inner.querySelector('.rh-first'), hang: inner.querySelector('.rh-hang'), left: inner.querySelector('.rh-left'), right: inner.querySelector('.rh-right') };
   const tabsEl = inner.querySelector('.ruler-tabs');
+  const TYPES = [['0', '⌊', 'Sol'], ['2', '⊥', 'Orta'], ['1', '⌋', 'Sağ'], ['4', '⊥.', 'Ondalık']];
+  const typeBtn = el.querySelector('.ruler-tabtype');
+  typeBtn.onclick = () => {
+    const i = (TYPES.findIndex((t) => t[0] === typeBtn.dataset.t) + 1) % TYPES.length;
+    [typeBtn.dataset.t, typeBtn.textContent] = TYPES[i];
+    typeBtn.title = `Sekme türü: ${TYPES[i][2]} (tıklayınca değişir)`;
+  };
+  const parseStops = (p) => String(p?.tabSet || '').split(',').map((t) => t.split(':')).filter((t) => parseFloat(t[0]) > 0).map(([pos, al, ld]) => ({ pos: parseFloat(pos), al: al || '0', ld: ld || '0' }));
+  const setStops = (stops) => {
+    const s = [...stops].sort((a, b) => a.pos - b.pos);
+    tab.editor.chain().focus().setParagraphAttrs({ tabSet: s.length ? s.map((t) => `${Math.round(t.pos * 100) / 100}:${t.al}:${t.ld}`).join(',') : null }).run();
+    tab.editor.view.dom.__retab?.();
+  };
+  const snapPt = (pt, free) => (free ? pt : Math.round(pt / (28.3465 / 4)) * (28.3465 / 4));
+  const ptAt = (clientX) => (clientX - inner.getBoundingClientRect().left) / z() / PT_TO_PX - tab.geom.left / PT_TO_PX;
+  let tabDrag = null;
   let geoKey = '';
   let drag = null;
   const guide = document.createElement('div');
@@ -77,8 +96,9 @@ export function createRuler(app, tab) {
     if (!p) return;
     place(p.leftIndent || 0, p.firstLineIndent || 0, p.rightIndent || 0);
     const g = tab.geom, k = z();
-    const stops = String(p.tabSet || '').split(',').map((t) => parseFloat(t)).filter(Number.isFinite);
-    tabsEl.innerHTML = stops.map((pt) => `<i style="left:${(g.left + pt * PT_TO_PX) * k}px" title="Sekme: ${(pt / 28.3465).toFixed(2).replace('.', ',')} cm"></i>`).join('');
+    const stops = parseStops(p);
+    const glyph = { 0: '⌊', 2: '⊥', 1: '⌋', 4: '⊥.' };
+    tabsEl.innerHTML = stops.map((t, i) => `<b data-i="${i}" class="rt rt-${t.al}" style="left:${(g.left + t.pos * PT_TO_PX) * k}px" title="Sekme: ${(t.pos / 28.3465).toFixed(2).replace('.', ',')} cm — sürükleyin; cetvelden çekip çıkarınca silinir">${glyph[t.al] || '⌊'}</b>`).join('');
   }
 
   // ---- dragging
@@ -130,6 +150,46 @@ export function createRuler(app, tab) {
     node.addEventListener('lostpointercapture', end);
   }
   svg.addEventListener('dblclick', () => app.run('paragraphDialog'));
+  // click on the scale (inside the text column): a new tab stop of the chosen type
+  svg.addEventListener('click', (e) => {
+    if (e.detail > 1) return;
+    const { p, inTable } = current();
+    if (!p || inTable) return;
+    const pos = snapPt(ptAt(e.clientX), e.altKey);
+    const width = (tab.geom.pageW - tab.geom.left - tab.geom.right) / PT_TO_PX;
+    if (pos <= 0 || pos >= width) return;
+    const stops = parseStops(p).filter((t) => Math.abs(t.pos - pos) > 1);
+    stops.push({ pos, al: typeBtn.dataset.t, ld: '0' });
+    setStops(stops);
+  });
+  // drag a stop to move it; off the ruler (up or down) removes it
+  tabsEl.addEventListener('pointerdown', (e) => {
+    const m = e.target.closest('.rt');
+    if (!m) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { m.setPointerCapture(e.pointerId); } catch {}
+    tabDrag = { i: Number(m.dataset.i), el: m, y0: e.clientY };
+  });
+  tabsEl.addEventListener('pointermove', (e) => {
+    if (!tabDrag) return;
+    const pos = snapPt(ptAt(e.clientX), e.altKey);
+    tabDrag.el.style.left = `${(tab.geom.left + pos * PT_TO_PX) * z()}px`;
+    tabDrag.el.classList.toggle('rt-off', Math.abs(e.clientY - tabDrag.y0) > 18);
+  });
+  const tabEnd = (e) => {
+    if (!tabDrag) return;
+    const d = tabDrag;
+    tabDrag = null;
+    const { p } = current();
+    const stops = parseStops(p);
+    if (Math.abs(e.clientY - d.y0) > 18) stops.splice(d.i, 1);
+    else if (stops[d.i]) stops[d.i].pos = Math.max(1, snapPt(ptAt(e.clientX), e.altKey));
+    setStops(stops);
+    refresh();
+  };
+  tabsEl.addEventListener('pointerup', tabEnd);
+  tabsEl.addEventListener('lostpointercapture', (e) => tabDrag && tabEnd(e));
   el.addEventListener('mousedown', (e) => { if (!e.target.closest('.rh')) e.preventDefault(); });
 
   return {

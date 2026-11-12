@@ -465,7 +465,11 @@ body.hide-markup .udf-doc ins.udf-ins { text-decoration: none; color: inherit; }
 .rh-right { top: 9px; height: 7px; }
 .rh-right::before { bottom: 0; border-bottom: 7px solid var(--accent); }
 .ruler-inner.no-para .rh { display: none; }
-.ruler-tabs i { position: absolute; bottom: 1px; width: 6px; height: 6px; margin-left: -1px; border-left: 2px solid var(--text); border-bottom: 2px solid var(--text); pointer-events: none; opacity: .7; }
+.ruler-tabs .rt { position: absolute; bottom: -2px; transform: translateX(-50%); font: 700 12px/12px Segoe UI, sans-serif; color: var(--text); cursor: ew-resize; user-select: none; padding: 0 2px; }
+.ruler-tabs .rt-1 { transform: translateX(-90%); }
+.ruler-tabs .rt-0 { transform: translateX(-15%); }
+.ruler-tabs .rt.rt-off { opacity: .3; }
+.ruler-tabtype { position: absolute; left: -26px; top: 0; width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font: 700 12px/16px Segoe UI, sans-serif; padding: 0; cursor: pointer; z-index: 2; }
 .ruler-guide { position: absolute; width: 0; border-left: 1px dashed var(--accent); pointer-events: none; z-index: 6; }
 .ruler-guide.hidden { display: none; }
 .recover-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }

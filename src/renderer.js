@@ -2135,7 +2135,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'rulertabs', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2278,6 +2278,38 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'rulertabs': { // Word-style tab stops on the ruler: add (typed), move, drag off to remove
+        const t = newDocument('blank');
+        await wait(200);
+        t.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: 'Bedel\t1.500 TL' }] }] });
+        t.editor.commands.setTextSelection(3);
+        t.ruler.setVisible(true);
+        await wait(150);
+        const typeBtn = t.host.querySelector('.ruler-tabtype');
+        typeBtn.click(); // → center
+        const svg = t.host.querySelector('.ruler-scale');
+        const inner = t.host.querySelector('.ruler-inner').getBoundingClientRect();
+        const xAt = (cm) => inner.left + (t.geom.left + cm * 28.3465 * PT_TO_PX) * app.zoom;
+        svg.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: xAt(8), clientY: inner.top + 10, detail: 1 }));
+        await wait(150);
+        const added = t.editor.getAttributes('paragraph').tabSet;
+        t.ruler.refresh();
+        let m = t.host.querySelector('.ruler-tabs .rt');
+        const r0 = m.getBoundingClientRect();
+        const pe = (type, x, y) => m.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerId: 1 }));
+        pe('pointerdown', r0.left + 3, r0.top + 3); pe('pointermove', xAt(10), r0.top + 3); pe('pointerup', xAt(10), r0.top + 3);
+        await wait(150);
+        const moved = t.editor.getAttributes('paragraph').tabSet;
+        t.ruler.refresh();
+        m = t.host.querySelector('.ruler-tabs .rt');
+        const r1 = m.getBoundingClientRect();
+        pe('pointerdown', r1.left + 3, r1.top + 3); pe('pointermove', r1.left + 3, r1.top + 60); pe('pointerup', r1.left + 3, r1.top + 60);
+        await wait(150);
+        const removed = t.editor.getAttributes('paragraph').tabSet;
+        t.dirty = false;
+        await closeTab(t);
+        return { ok: /^226\.7\d?:2:0$/.test(added || '') && /^283\.4\d?:2:0$/.test(moved || '') && removed == null, added, moved, removed };
       }
       case 'udfpitch': { // .udf line pitch = what UYAP Doküman Editörü 5.4.20 draws (measured)
         const cases = [['Times New Roman', 12, 0, 14], ['Times New Roman', 12, 0.15, 16], ['Times New Roman', 12, 0.5, 20], ['Times New Roman', 12, 1, 28], ['Arial', 14, 0.5, 25], ['Arial', 14, 1, 33], ['Times New Roman', 11, 0, 13], ['Times New Roman', 14, 0, 17]];

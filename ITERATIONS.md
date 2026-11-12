@@ -817,3 +817,19 @@ tables; headings with spacing. Word documents keep Word's rules.
   and egUDF still says so when such a file opens.
 - **Checked, no change needed:** pictures in a .udf appear in UYAP at exactly
   their stored size, the same as in egUDF.
+
+## 0.30.0: Tab stops on the ruler (iteration 29)
+
+- **Tab stops on the ruler, as in Word:**
+  - The button at the ruler's left picks the type: left ⌊, center ⊥,
+    right ⌋, decimal ⊥.
+  - A click on the ruler adds a stop of that type at that point (snapped to
+    0.25 cm; hold Alt for free placement).
+  - Drag a stop to move it. Drag it off the ruler (up or down) to remove it.
+  - The current paragraph's stops show with their type's marker.
+  - A double-click opens the Paragraph dialog's settings, as before.
+- In a .udf, right, center and decimal stops work in UYAP too, as checked
+  earlier. Leaders (dots) are set in the Paragraph dialog, for Word
+  documents.
+- **Testing:** new smoke step `rulertabs` adds a center stop at 8 cm, drags it
+  to 10 cm, then drags it off.
