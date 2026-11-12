@@ -69,7 +69,8 @@ test('docx export is a valid package and imports back with formatting', () => {
   assert.ok(c[5].content[0].marks.some((m) => m.type === 'insertion' && m.attrs.author === 'Av. Ayşe'));
   assert.ok(c[5].content[2].marks.some((m) => m.type === 'deletion'));
   assert.ok(c[6].content[0].marks.some((m) => m.type === 'comment'));
-  assert.equal(back.review.comments[0].text, 'Kontrol et\n— Ali: Tamam');
+  assert.equal(back.review.comments[0].text, 'Kontrol et');
+  assert.deepEqual(back.review.comments[0].replies.map((r) => [r.author, r.text]), [['Ali', 'Tamam']]); // a Word reply thread
   assert.equal(back.review.comments[0].quote, 'Yorumlu metin');
   assert.equal(c[7].type, 'table');
   assert.equal(c[7].attrs.udf.border, 'borderCell');

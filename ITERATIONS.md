@@ -389,3 +389,56 @@ you need a redline.
     with one paragraph removed → exactly 1 deletion.
   - Smoke step `compare` drives the dialog and checks the accept-all and
     reject-all round trips.
+
+## 0.14.0: Word documents as Word (iteration 13)
+
+- **Header/footer no longer overlap the text:** a header taller than the
+  space above the top margin pushes the body down (and a tall footer pushes
+  the bottom up), on every page, as in Word. With "different first page",
+  page 1 starts at its own height. Word headers keep their own colour and
+  size (UDF headers stay grey, as UYAP draws them).
+- **.docx opens as a Word document and saves as one:**
+  - Ctrl+S writes the .docx back; the tab shows a blue **W**. Farklı kaydet
+    offers .udf or .docx; signing or sending to UYAP asks for a .udf name.
+  - Comments are saved with their **reply threads and "resolved" state**
+    (Word's commentsExtended); tracked insertions, deletions and formatting
+    changes as Word revisions. Checked by opening the result in Word.
+  - What egUDF can't keep yet (footnotes, text boxes, section breaks,
+    floating shapes, equations, charts…) is listed when the file opens. You
+    are asked before overwriting the original: save a copy, or overwrite.
+- **egUDF is registered for .docx:** the installer adds egUDF to "Open with"
+  and to Windows Settings → Default apps, without taking .docx away from
+  Word. Dosya → Bilgi → ".docx için varsayılan uygulama…" opens that page.
+- **Paste from Word keeps everything:** Word puts the copied selection on the
+  clipboard as a complete .docx ("Embed Source"). egUDF pastes that instead of
+  the HTML, so Ctrl+A / Ctrl+C in Word and Ctrl+V here gives the same result as
+  opening the file: fonts, sizes, colours, spacing, lists (numbering
+  continues correctly), tables, images, comments and tracked changes. A few
+  words pasted mid-sentence join that sentence.
+- **Word fidelity** (measured against Word's own PDF of a test document):
+  - Tab stops: right / center / decimal stops with dot, hyphen and line
+    leaders ("Bedel ........ 1.500.000 TL"), default stops, hanging-indent
+    stops. Also in headers.
+  - Line breaks (Shift+Enter) stay inside the paragraph; page breaks
+    (Ctrl+Enter in Word) start a new page.
+  - Paragraph spacing collapses as in Word (the larger of "after" and the
+    next "before"). Exact / at-least line spacing. Word's single line height
+    per font (Calibri is taller than Times).
+  - Lines are sized by their own text, not the document font (small-print
+    tables, 9 pt headers, small empty spacer lines).
+  - Paragraph borders (lines under headings and letterheads) and shading.
+  - Tables: merged cells across rows, cell shading, vertical alignment, row
+    heights, per-cell borders, cell margins, the table style's paragraph
+    spacing ("Table Grid" has none).
+  - Small caps, all caps, letter spacing, double strikethrough.
+  - Theme fonts, and Office's downloaded fonts (Aptos…), which other apps
+    can't see, are loaded from Office's font cache.
+  - All of it is written back on save; a Word document round-trips without
+    loss of these properties.
+- **Fix:** a line ending within half a pixel of the page end could leave the
+  next line in the bottom margin with no page break (all documents).
+- **Testing:**
+  - Smoke steps `docx-save`, `docx-header`, `wordpaste`. `wordpaste` uses the
+    real Word clipboard when Word data is on it, else a generated package.
+  - 80 real .docx files round-trip (docx → docx → udf); the full smoke suite
+    passes in the packaged exe.

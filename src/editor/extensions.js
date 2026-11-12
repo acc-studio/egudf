@@ -19,12 +19,24 @@ export function paraStyle(a) {
   if (a.leftIndent) s.push(`padding-left:${pt(a.leftIndent)}`);
   if (a.rightIndent) s.push(`padding-right:${pt(a.rightIndent)}`);
   if (a.firstLineIndent) s.push(`text-indent:${pt(a.firstLineIndent)}`);
-  if (a.spaceAbove) s.push(`padding-top:${pt(a.spaceAbove)}`);
-  if (a.spaceBelow) s.push(`padding-bottom:${pt(a.spaceBelow)}`);
-  if (a.lineSpacing) s.push(`--ls:${1 + a.lineSpacing}`);
-  // CSS has one tab size per block: use the paragraph's first explicit stop (label columns)
-  const stop = parseFloat(String(a.tabSet || '').split(',')[0]);
-  if (stop > 0) s.push(`tab-size:${pt(stop - (a.leftIndent || 0) > 6 ? stop - (a.leftIndent || 0) : stop)}`);
+  const bd = a.border || {};
+  // with a border, paragraph spacing lies outside it (margin) and border spacing inside (padding)
+  // spacing goes through --sa/--sb: padding in UDF documents, collapsing margins in
+  // Word documents (Word uses max(space after, next space before), as CSS margins do)
+  if (bd.top && a.spaceAbove) s.push(`margin-top:${pt(a.spaceAbove)}`); else if (a.spaceAbove) s.push(`--sa:${pt(a.spaceAbove)}`);
+  if (bd.bottom && a.spaceBelow) s.push(`margin-bottom:${pt(a.spaceBelow)}`); else if (a.spaceBelow) s.push(`--sb:${pt(a.spaceBelow)}`);
+  for (const side of ['top', 'bottom', 'left', 'right']) {
+    const b = bd[side];
+    if (!b) continue;
+    s.push(`border-${side}:${pt(Math.max(0.5, b.width || 0.5))} ${b.style === 'double' ? 'double' : b.style === 'dotted' ? 'dotted' : b.style === 'dashed' ? 'dashed' : 'solid'} ${b.color || '#000'}`);
+    if (side === 'top' || side === 'bottom') s.push(`padding-${side}:${pt(b.space ?? 1)}`);
+  }
+  if (a.shading) s.push(`background-color:${a.shading}`);
+  if (a.strut?.size) s.push(`font-size:${pt(a.strut.size)}`);
+  if (a.strut?.family) s.push(`font-family:'${String(a.strut.family).replace(/'/g, '')}'`);
+  if (a.lineRule === 'exact' && a.lineHeight) s.push(`line-height:${pt(a.lineHeight)}`, 'min-height:0');
+  else if (a.lineRule === 'atLeast' && a.lineHeight) s.push(`line-height:max(calc(var(--lhf, 1.15) * 1em), ${pt(a.lineHeight)})`);
+  else if (a.lineSpacing) s.push(`--ls:${1 + a.lineSpacing}`);
   return s.join(';');
 }
 
@@ -57,7 +69,9 @@ export const UdfParagraph = Paragraph.extend({
     const a = node.attrs;
     const diff = {};
     for (const k of Object.keys(PARA_DEFAULTS)) if (JSON.stringify(a[k]) !== JSON.stringify(PARA_DEFAULTS[k])) diff[k] = a[k];
-    const out = { class: 'udf-p' };
+    // a line holding only images is as tall as the images (Word adds no font descent)
+    const imgOnly = node.childCount > 0 && node.content.content.every((c) => c.type.name === 'image');
+    const out = { class: imgOnly ? 'udf-p udf-imgline' : 'udf-p' };
     const style = paraStyle(a);
     if (style) out.style = style;
     if (Object.keys(diff).length) out['data-p'] = JSON.stringify(diff);
@@ -140,9 +154,57 @@ const withUdf = (ext) => ext.extend({
     return out;
   },
 });
-export const UdfTable = withUdf(Table).configure({ resizable: true, cellMinWidth: 24, lastColumnResizable: true });
-export const UdfTableRow = withUdf(TableRow);
-export const UdfTableCell = withUdf(TableCell).extend({ content: 'block+' });
+// Word cell/row/table formatting (not written to UDF):
+//   cell fmt { bg, valign 'top'|'center'|'bottom', borders { top|bottom|left|right: { style, width, color } | 'none' }, pad { left, right, top, bottom } (pt) }
+//   row fmt { height (pt), exact (bool), header (bool) }
+//   table fmt { indent (pt), align 'center'|'right' }
+const borderCss = (b) => (b === 'none' ? 'none' : `${pt(Math.max(0.5, b.width || 0.5))} ${b.style === 'double' ? 'double' : b.style === 'dotted' ? 'dotted' : b.style === 'dashed' ? 'dashed' : 'solid'} ${b.color || '#000'}`);
+export function cellStyle(f) {
+  if (!f) return '';
+  const s = [];
+  if (f.bg) s.push(`background-color:${f.bg}`);
+  if (f.valign) s.push(`vertical-align:${f.valign === 'center' ? 'middle' : f.valign}`);
+  for (const [side, b] of Object.entries(f.borders || {})) if (b) s.push(`border-${side}:${borderCss(b)}`);
+  for (const [side, v] of Object.entries(f.pad || {})) if (v != null) s.push(`padding-${side}:${pt(v)}`);
+  return s.join(';');
+}
+const fmtAttr = { fmt: { default: null, rendered: false, parseHTML: (el) => { try { return JSON.parse(el.dataset.fmt || 'null'); } catch { return null; } } } };
+const withFmt = (ext, styleOf) => ext.extend({
+  addAttributes() { return { ...this.parent?.(), ...fmtAttr }; },
+  renderHTML(props) {
+    const out = this.parent(props);
+    const f = props.node.attrs.fmt;
+    if (f && Array.isArray(out) && typeof out[1] === 'object') {
+      out[1]['data-fmt'] = JSON.stringify(f);
+      const st = styleOf(f);
+      if (st) out[1].style = `${out[1].style ? `${out[1].style};` : ''}${st}`;
+    }
+    return out;
+  },
+});
+export const UdfTable = withFmt(withUdf(Table), () => '').configure({ resizable: true, cellMinWidth: 24, lastColumnResizable: true });
+export const UdfTableRow = withFmt(withUdf(TableRow), (f) => (f.height ? `height:${pt(f.height)}` : ''));
+export const UdfTableCell = withFmt(withUdf(TableCell), cellStyle).extend({ content: 'block+' });
+
+/**
+ * Word character effects on the textStyle mark (not written to UDF):
+ * letterSpacing (pt), smallCaps, allCaps, dstrike (double strikethrough).
+ */
+export const TextEffects = Extension.create({
+  name: 'textEffects',
+  addGlobalAttributes() {
+    const a = (name, css, parse) => ({ [name]: { default: null, parseHTML: parse, renderHTML: (attrs) => (attrs[name] ? { style: css(attrs[name]) } : {}) } });
+    return [{
+      types: ['textStyle'],
+      attributes: {
+        ...a('letterSpacing', (v) => `letter-spacing:${pt(v)}`, (el) => (el.style.letterSpacing ? toPt(el.style.letterSpacing) || null : null)),
+        ...a('smallCaps', () => 'font-variant:small-caps', (el) => (el.style.fontVariant === 'small-caps' ? true : null)),
+        ...a('allCaps', () => 'text-transform:uppercase', (el) => (el.style.textTransform === 'uppercase' ? true : null)),
+        ...a('dstrike', () => 'text-decoration:line-through double', (el) => (/double/.test(el.style.textDecoration) && /line-through/.test(el.style.textDecoration) ? true : null)),
+      },
+    }];
+  },
+});
 export { TableHeader };
 
 // ------------------------------------------------------------------ keyboard

@@ -129,6 +129,12 @@ export function defaultParaAttrs() {
   return {
     align: 'left', leftIndent: 0, rightIndent: 0, firstLineIndent: 0, hanging: 0,
     spaceAbove: 0, spaceBelow: 0, lineSpacing: 0, tabSet: null, list: null, extra: null,
+    // Word-only paragraph properties (not written to UDF): lineRule 'exact'|'atLeast'
+    // with lineHeight in pt; border { top|bottom|left|right: { style, width, color, space } }
+    lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, border: null, shading: null,
+    // strut { size (pt), family }: the paragraph's own font when it differs from the
+    // document's — Word sizes lines from the runs (and empty paragraphs from the mark)
+    strut: null,
   };
 }
 
@@ -282,20 +288,39 @@ const attrStr = (o) => Object.entries(o).filter(([, v]) => v != null && v !== ''
  * serializeUdfXml(doc, meta) → content.xml string
  * doc — ProseMirror JSON (body); meta — as returned by parseUdfXml (or newDocMeta()).
  */
+/**
+ * UDF has no line break inside a paragraph (Word's Shift+Enter): one paragraph
+ * per line, without paragraph spacing between the lines.
+ */
+export function splitBreaks(n) {
+  if (n.type === 'table') {
+    return [{ ...n, content: (n.content || []).map((r) => ({ ...r, content: (r.content || []).map((c) => ({ ...c, content: (c.content || []).flatMap(splitBreaks) })) })) }];
+  }
+  if (n.type !== 'paragraph' || !(n.content || []).some((c) => c.type === 'hardBreak')) return [n];
+  const lines = [[]];
+  for (const c of n.content) if (c.type === 'hardBreak') lines.push([]); else lines[lines.length - 1].push(c);
+  const a = n.attrs || {};
+  return lines.map((content, i) => ({
+    type: 'paragraph',
+    attrs: { ...a, ...(i ? { list: null, firstLineIndent: a.list ? 0 : (a.firstLineIndent || 0), spaceAbove: 0 } : {}), ...(i < lines.length - 1 ? { spaceBelow: 0 } : {}) },
+    ...(content.length ? { content } : {}),
+  }));
+}
+
 export function serializeUdfXml(doc, meta) {
   const base = meta.base || { family: 'Times New Roman', size: 12 };
   const w = { text: '', base };
   const out = [];
 
-  if (meta.header) out.push(`<header${attrStr(meta.header.attrs || {})}>${blocksXml(meta.header.content || [], w)}</header>`);
+  if (meta.header) out.push(`<header${attrStr(meta.header.attrs || {})}>${blocksXml((meta.header.content || []).flatMap(splitBreaks), w)}</header>`);
   const unknown = [...(meta.unknown || [])].sort((a, b) => a.index - b.index);
   let ui = 0;
   (doc.content || []).forEach((n, i) => {
     while (ui < unknown.length && unknown[ui].index <= i) out.push(unknown[ui++].xml);
-    out.push(blockXml(n, w));
+    for (const piece of splitBreaks(n)) out.push(blockXml(piece, w));
   });
   while (ui < unknown.length) out.push(unknown[ui++].xml);
-  if (meta.footer) out.push(`<footer${attrStr(meta.footer.attrs || {})}>${blocksXml(meta.footer.content || [], w)}</footer>`);
+  if (meta.footer) out.push(`<footer${attrStr(meta.footer.attrs || {})}>${blocksXml((meta.footer.content || []).flatMap(splitBreaks), w)}</footer>`);
 
   const styles = (meta.styles?.length ? meta.styles : DEFAULT_STYLES).map((s) => `<style${attrStr(s)} />`).join('');
   const cdata = w.text.split(']]>').join(']]]]><![CDATA[>');
@@ -494,7 +519,7 @@ export function docText(doc) {
   const paras = [];
   (function walk(n) {
     if (n.type === 'paragraph') {
-      paras.push((n.content || []).map((c) => (c.type === 'text' && !isDeleted(c) ? c.text : '')).join(''));
+      paras.push((n.content || []).map((c) => (c.type === 'text' && !isDeleted(c) ? c.text : c.type === 'hardBreak' ? '\n' : '')).join(''));
       return;
     }
     (n.content || []).forEach(walk);

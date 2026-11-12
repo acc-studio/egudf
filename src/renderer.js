@@ -23,6 +23,8 @@ import { setupSpell, applySpellSettings, spellDialog, spellLangMenu, dictionaryD
 import { readPageNumber, writePageNumber, pageLabel, PN_FORMATS, formatOf } from './udf/pagenum.js';
 import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, currentColumnWidth, sortRows, textToTable, tableToText, cellRect, PX_PER_CM } from './editor/tables.js';
 import { exportDocx, importDocx } from './interop/docx.js';
+import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
+import { layoutTabsDom } from './editor/tabs.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -73,14 +75,60 @@ function applyGeometry(tab) {
   s.width = `${g.pageW}px`;
   s.fontFamily = `'${tab.meta.base.family}', 'Liberation Serif', 'Times New Roman', serif`;
   s.fontSize = `${tab.meta.base.size}pt`;
+  tab.sheet.classList.toggle('word-hf', tab.format === 'docx');
+  // Word's "single" line height is the font's own (ascent + descent + gap); UDF keeps 1.15
+  s.setProperty('--lhf', tab.format === 'docx' ? String(lineFactor(tab.meta.base.family)) : '1.15');
+  fitHeaderFooter(tab, g);
   const pm = tab.sheet.querySelector('.udf-doc');
   if (pm) {
-    pm.style.paddingTop = `${g.top}px`;
+    pm.style.paddingTop = `${g.firstTop}px`;
     pm.style.paddingLeft = `${g.left}px`;
     pm.style.paddingRight = `${g.right}px`;
     pm.style.minHeight = `${g.pageH}px`;
   }
   applyZoom(tab);
+}
+
+/**
+ * Like Word: a header taller than the space above the top margin pushes the body
+ * down (and a tall footer pushes the bottom up) instead of overlapping it.
+ * Sets g.top / g.bottom (pages 2+) and g.firstTop (page 1, which may have no header).
+ */
+function fitHeaderFooter(tab, g) {
+  g.marginTop = g.top;
+  g.marginBottom = g.bottom;
+  const hdr = tab.meta.header, ftr = tab.meta.footer;
+  const pn = readPageNumber(ftr?.attrs);
+  const pad = tab.format === 'docx' ? 0 : 6 * PT_TO_PX; // the UDF→PDF engine leaves 6pt (keep the view identical)
+  const box = (cls, htmlStr) => {
+    if (!htmlStr) return 0;
+    let m = tab.sheet.querySelector(':scope > .pg-measure');
+    if (!m) { m = document.createElement('div'); m.className = 'pg-measure'; tab.sheet.append(m); }
+    m.innerHTML = `<div class="${cls}" style="position:static;width:${g.pageW - g.left - g.right}px">${htmlStr}</div>`;
+    const el = m.firstElementChild;
+    for (const img of el.querySelectorAll('img')) if (!img.complete) img.addEventListener('load', () => { applyGeometry(tab); tab.editor.commands.repaginate(); }, { once: true });
+    layoutTabsDom(el, tab.meta.defaultTab || 36);
+    const hgt = el.offsetHeight;
+    m.innerHTML = '';
+    return hgt;
+  };
+  const hasText = (part) => (part?.content || []).some((b) => b.type !== 'paragraph' || (b.content || []).length);
+  const pnH = pn.on ? pn.size * 1.25 * PT_TO_PX : 0;
+  let hH = hdr && hasText(hdr) ? box('pg-header', tab._hHtml ??= staticHTML(hdr.content)) : 0;
+  const top = (extra) => (extra > 0 ? Math.max(g.marginTop, g.headerOff + extra + pad) : g.marginTop);
+  const pnTop = pn.on && pn.vert === 'top' ? pnH : 0;
+  g.top = top(Math.max(hH, pnTop));
+  g.firstTop = num(hdr?.attrs?.startPage, 1) > 1 ? top(pnTop) : g.top;
+  const fH = ftr && hasText(ftr) ? box('pg-footer', tab._fHtml ??= staticHTML(ftr.content)) : 0;
+  const fExtra = fH + (pn.on && pn.vert === 'bottom' ? pnH : 0);
+  g.bottom = fExtra > 0 ? Math.max(g.marginBottom, g.footerOff + fExtra + pad) : g.marginBottom;
+}
+
+/** Single line height / font size, from the fonts' hhea metrics (what Word uses). */
+function lineFactor(family) {
+  const f = String(family || '').toLowerCase();
+  const T = { calibri: 1.2207, 'calibri light': 1.2207, cambria: 1.1719, aptos: 1.2, arial: 1.1499, 'times new roman': 1.1499, georgia: 1.1362, verdana: 1.2153, tahoma: 1.2075, 'segoe ui': 1.3301, garamond: 1.1265, 'book antiqua': 1.1704, 'courier new': 1.1328, 'century gothic': 1.2251, 'trebuchet ms': 1.1641, helvetica: 1.1499, 'arial narrow': 1.1499, candara: 1.2207, constantia: 1.2207, corbel: 1.2207 };
+  return T[f] || 1.15;
 }
 
 function applyZoom(tab) {
@@ -92,18 +140,25 @@ function applyZoom(tab) {
   box.style.height = `${tab.sheet.offsetHeight * app.zoom}px`;
 }
 
-function newTab({ title, path = null, doc, meta, original = null, sig = null, review = null }) {
+function newTab({ title, path = null, doc, meta, original = null, sig = null, review = null, format = 'udf' }) {
   const host = h(`<div class="doc-host"><div class="zoom-box"><div class="sheet"><div class="page-overlay"></div><div class="mount"></div></div></div></div>`);
   $('#doc-area').append(host);
-  const tab = { id: ++seq, title, path, meta, host, sheet: $('.sheet', host), overlay: $('.page-overlay', host), dirty: false, reviewDirty: false, original, sig, review: review || { comments: [] }, pages: 1 };
+  const tab = { id: ++seq, title, path, format, meta, host, sheet: $('.sheet', host), overlay: $('.page-overlay', host), dirty: false, reviewDirty: false, original, sig, review: review || { comments: [] }, pages: 1 };
   tab.geom = geometry(meta);
   tab.editor = createEditor({
     element: $('.mount', host),
     content: doc,
-    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet }),
+    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet }),
     onLayout: (L) => drawOverlay(tab, L),
+    defaultTab: () => tab.meta.defaultTab || 36,
     onUpdate: (_e, tr) => onDocChange(tab, tr),
     onSelection: () => { if (tab === app.active) scheduleUI(); },
+    onPaste: (e) => {
+      const html = e.clipboardData?.getData('text/html');
+      if (!isWordHtml(html)) return false;
+      pasteFromWord(tab, html, e.clipboardData.getData('text/plain'));
+      return true;
+    },
   });
   setupSpell(app, tab);
   Object.assign(tab.editor.storage.autocorrect, app.ac);
@@ -129,7 +184,7 @@ function activate(tab) {
   document.body.classList.toggle('no-doc', !tab);
   renderTabs();
   if (tab) {
-    applyZoom(tab);
+    applyGeometry(tab);
     tab.editor.commands.repaginate();
     setTimeout(() => tab.editor.commands.focus(), 0);
     document.title = `${tab.title} — egUDF`;
@@ -151,7 +206,7 @@ function renderTabs() {
     const sigCls = t.sig ? (t.sig.state === 'valid' ? '' : t.sig.state === 'stale' ? 'stale' : 'invalid') : null;
     const b = h(`<div class="tab ${t === app.active ? 'active' : ''}" title="${esc(t.path || t.title)}">
       ${sigCls !== null ? `<span title="${t.sig.state === 'valid' ? 'İmzalı' : 'İmza geçersiz'}">${icon('verify', `tab-sig ${sigCls}`)}</span>` : ''}
-      <span class="tab-title">${esc(t.title)}</span>${isDirty(t) ? '<span class="tab-dirty">●</span>' : ''}
+      ${t.format === 'docx' ? '<span class="tab-fmt" title="Word belgesi (.docx)">W</span>' : ''}<span class="tab-title">${esc(t.title)}</span>${isDirty(t) ? '<span class="tab-dirty">●</span>' : ''}
       <button class="tab-close" title="Kapat (Ctrl+W)">✕</button></div>`);
     b.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } };
     b.onclick = (e) => { if (e.target.closest('.tab-close')) closeTab(t); else activate(t); };
@@ -205,6 +260,7 @@ function drawOverlay(tab, L) {
     }
   }
   tab.overlay.innerHTML = html;
+  if (/	/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36);
   tab.pageBoxes = { tops, bottoms };
   tab.pages = n;
   if (tab === app.active) scheduleUI();
@@ -234,7 +290,8 @@ function onDocChange(tab, tr) {
 let reviewTimer = null;
 function scheduleReview() { clearTimeout(reviewTimer); reviewTimer = setTimeout(() => renderReview(app), 200); }
 
-const baseName = (p) => p.split(/[\\/]/).pop().replace(/\.udf$/i, '');
+const baseName = (p) => p.split(/[\\/]/).pop().replace(/\.(udf|docx)$/i, '');
+const stem = (p) => p.replace(/\.(udf|docx)$/i, '');
 
 async function openPath(path) {
   const existing = app.tabs.find((t) => t.path && t.path.toLowerCase() === path.toLowerCase());
@@ -327,6 +384,7 @@ async function offerCollab(tab) {
 async function collabToggle(tab) {
   if (!tab) return;
   if (app.collab.active(tab)) { await app.collab.stop(tab); toast('Ortak çalışma kapatıldı.', { ms: 1800 }); return; }
+  if (tab.format === 'docx') { toast('Ortak çalışma şimdilik yalnızca .udf belgelerinde: belgeyi .udf olarak kaydedin (Farklı kaydet).', { type: 'warn', ms: 5000 }); return; }
   if (!tab.path) { toast('Ortak çalışma için belgeyi önce OneDrive (ya da başka bir eşitlenen) klasöre kaydedin.', { type: 'warn', ms: 5000 }); return; }
   const where = await native.collab.synced(tab.path);
   if (!where) {
@@ -336,23 +394,104 @@ async function collabToggle(tab) {
   await app.collab.start(tab);
 }
 
-/** Word → new unsaved UDF tab (Save asks for a .udf name next to the original). */
-async function openDocx(path, bytes = null) {
+/** A Word document, edited as Word: Save writes the .docx back (Save As can make a .udf). */
+async function openDocx(path, bytes = null, name = null) {
   try {
-    const r = importDocx(bytes || await native.readFile(path));
-    const title = path ? path.split(/[\\/]/).pop().replace(/\.docx$/i, '') : 'Word belgesi';
-    const tab = newTab({ title, doc: r.doc, meta: r.meta, review: r.review });
-    tab.dirty = true;
-    tab.importedFrom = path;
+    const raw = bytes || await native.readFile(path);
+    const r = importDocx(raw);
+    const title = path ? baseName(path) : (name || 'Word belgesi').replace(/\.docx$/i, '');
+    const tab = newTab({ title, path, doc: r.doc, meta: r.meta, review: r.review, format: 'docx' });
+    tab.docxLoss = r.warnings || [];
+    await ensureFonts(tab);
     renderTabs();
     if (r.review.comments.length || changeList(tab.editor.state.doc).length) showPane(app, true);
-    toast('Word belgesi içe aktarıldı. UYAP için .udf olarak kaydedin.', { type: 'ok', ms: 5000 });
+    if (tab.docxLoss.length) toast(`Bu belgedeki bazı Word öğeleri henüz düzenlenemiyor: ${tab.docxLoss.join(', ')}. Üzerine kaydetmeden önce sorulacak.`, { type: 'warn', ms: 8000 });
     return tab;
   } catch (e) {
     toast(`Word belgesi açılamadı: ${e.message || e}`, { type: 'bad' });
+    if (path) removeRecent(path);
     return null;
   }
 }
+
+/** Font families a document uses (base, runs, header/footer). */
+function docFonts(tab) {
+  const out = new Set([tab.meta.base?.family]);
+  const walk = (n) => { for (const m of n.marks || []) if (m.type === 'textStyle' && m.attrs?.fontFamily) out.add(String(m.attrs.fontFamily).split(',')[0].replace(/["']/g, '').trim()); (n.content || []).forEach(walk); };
+  walk(tab.editor.getJSON());
+  for (const part of [tab.meta.header, tab.meta.footer]) (part?.content || []).forEach(walk);
+  return [...out].filter(Boolean);
+}
+
+/** Registers Office cloud fonts (Aptos…) a Word document uses, then re-lays it out. */
+const loadedFonts = new Set();
+let officeFontList = null;
+async function ensureFonts(tab) {
+  try {
+    officeFontList ??= await native.officeFonts();
+    const todo = docFonts(tab).filter((f) => officeFontList[f.toLowerCase()] && !loadedFonts.has(f.toLowerCase()));
+    if (!todo.length) return;
+    for (const fam of todo) {
+      loadedFonts.add(fam.toLowerCase());
+      await Promise.all(officeFontList[fam.toLowerCase()].map(async (face) => {
+        const ff = new FontFace(fam, await native.officeFontBytes(face.file), { weight: String(face.weight), style: face.italic ? 'italic' : 'normal' });
+        document.fonts.add(await ff.load());
+      }));
+    }
+    tab._hHtml = undefined; tab._fHtml = undefined;
+    applyGeometry(tab);
+    tab.editor.commands.repaginate();
+    tab.editor.view.dom.__retab?.();
+  } catch (e) { console.warn('office fonts', e); }
+}
+app.ensureFonts = ensureFonts;
+
+/** Writes the tab as .docx to path. */
+async function saveDocx(tab, path, { quiet = false } = {}) {
+  // overwriting the Word file we opened: say what would be lost, once
+  if (tab.docxLoss?.length && tab.format === 'docx' && tab.path && path.toLowerCase() === tab.path.toLowerCase() && !tab._lossOk) {
+    const r = await confirmBox({ title: 'Word belgesinin üzerine kaydet', text: `Bu belgede egUDF'in henüz koruyamadığı öğeler var: <b>${esc(tab.docxLoss.join(', '))}</b>. Üzerine kaydederseniz bunlar dosyadan çıkar.`, ok: 'Kopya olarak kaydet', cancel: 'İptal', extra: { label: 'Yine de kaydet', value: 'over', kind: 'danger' } });
+    if (r === false || r === null) return false;
+    if (r === true) {
+      const p = await native.saveDialog({ defaultPath: `${stem(path)} (egUDF).docx`, kind: 'doc-docx' });
+      if (!p) return false;
+      path = /\.(udf|docx)$/i.test(p) ? p : `${p}.docx`;
+      if (/\.udf$/i.test(path)) return save(tab, { path });
+    } else tab._lossOk = true;
+  }
+  const bytes = exportDocx(tab.editor.getJSON(), tab.meta, tab.review);
+  await native.writeFile(path, bytes);
+  if (app.collab?.active(tab)) await app.collab.stop(tab);
+  native.recovery.remove(recoveryKey(tab));
+  const wasUdf = tab.format !== 'docx';
+  Object.assign(tab, { path, title: baseName(path), format: 'docx', dirty: false, reviewDirty: false, sig: null, original: null, _autoRev: tab.rev });
+  if (wasUdf) { applyGeometry(tab); tab.editor.commands.repaginate(); }
+  addRecent(path, tab.title);
+  renderTabs();
+  scheduleUI();
+  if (!quiet) toast(`Kaydedildi: ${tab.title}.docx`, { type: 'ok', ms: 2200 });
+  return bytes;
+}
+
+/**
+ * Paste copied from Word: use the .docx Word puts on the clipboard, so the
+ * result matches opening the document. Falls back to Word's HTML.
+ */
+async function pasteFromWord(tab, html, text) {
+  let pkg = null;
+  try { const d = await native.readOffice(); pkg = d && wordPackage(d.embed); if (d?.text) text = d.text; } catch {}
+  try {
+    if (pkg) {
+      const r = pasteDocx(tab.editor, pkg, { text, base: tab.meta.base, review: tab.review });
+      if (r.comments) { renderReview(app); showPane(app, true); }
+      ensureFonts(tab);
+      return r;
+    }
+  } catch (e) { console.warn('Word paste failed, using HTML', e); }
+  tab.editor.view.pasteHTML(html);
+  return null;
+}
+app.pasteFromWord = pasteFromWord;
 
 /** A .udf as the editor sees it (for merging someone else's version). */
 async function parseUdfBytes(bytes) {
@@ -398,12 +537,22 @@ function contentBytes(tab) {
   return strToU8(serializeUdfXml(tab.editor.getJSON(), tab.meta));
 }
 
-async function save(tab, { as = false, quiet = false } = {}) {
+async function save(tab, { as = false, quiet = false, path: forced = null } = {}) {
   if (!tab) return false;
-  let path = tab.path;
+  let path = forced || tab.path;
   if (!path || as) {
-    path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/[^\\/]*$/, '') : tab.importedFrom ? tab.importedFrom.replace(/[^\\/]*$/, '') : ''}${tab.title}.udf`, kind: 'udf' });
+    const ext = tab.format === 'docx' ? 'docx' : 'udf';
+    path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/[^\\/]*$/, '') : tab.importedFrom ? tab.importedFrom.replace(/[^\\/]*$/, '') : ''}${tab.title}.${ext}`, kind: `doc-${ext}` });
     if (!path) return false;
+    if (!/\.(udf|docx)$/i.test(path)) path += `.${ext}`;
+  }
+  if (/\.docx$/i.test(path)) return saveDocx(tab, path, { quiet });
+  if (tab.format === 'docx') { // Word → UYAP document from now on
+    tab.format = 'udf';
+    tab.original = null;
+    tab.dirty = true;
+    applyGeometry(tab);
+    tab.editor.commands.repaginate();
   }
   let bytes;
   const docJson = tab.editor.getJSON();
@@ -439,11 +588,13 @@ async function save(tab, { as = false, quiet = false } = {}) {
 
 /** Called by the sign dialog. Signs content.xml on the card and writes the signed .udf. */
 app.signTab = async (tab, req) => {
-  let path = tab.path;
+  let path = tab.format === 'docx' ? null : tab.path;
   if (!path) {
-    path = await native.saveDialog({ defaultPath: `${tab.title}.udf`, kind: 'udf' });
+    path = await native.saveDialog({ defaultPath: `${tab.path ? stem(tab.path) : tab.title}.udf`, kind: 'udf' });
     if (!path) return { error: 'Kaydetme iptal edildi.' };
+    if (!/\.udf$/i.test(path)) path += '.udf';
   }
+  if (tab.format === 'docx') { tab.format = 'udf'; tab.dirty = true; applyGeometry(tab); }
   const xml = contentBytes(tab);
   const r = await native.sign.sign({ ...req, content: xml });
   if (!r.ok) return { error: r.error };
@@ -562,10 +713,12 @@ function backstage(section = 'new') {
         <div>Konum</div><div>${esc(t.path || 'Kaydedilmedi')}</div>
         <div>Sayfa</div><div>${t.pages}</div>
         <div>Kelime</div><div>${wordCount(t).toLocaleString('tr-TR')}</div>
-        <div>Biçim</div><div>UYAP Doküman (format_id ${esc(t.meta.formatId)})</div>
+        <div>Biçim</div><div>${t.format === 'docx' ? 'Word belgesi (.docx)' : `UYAP Doküman (format_id ${esc(t.meta.formatId)})`}</div>
         <div>İmza</div><div>${t.sig ? (t.sig.state === 'valid' ? `İmzalı — ${esc(t.sig.info?.signer?.subjectCN || '')}` : 'İmza geçersiz / eski') : 'İmzasız'}</div>
         <div>UYAP doğrulama</div><div>${t.original?.docProps ? 'Belgede UYAP doğrulama bilgisi var' : '—'}</div>
       </div>` : '<h1>Bilgi</h1><div class="bs-sub">Açık belge yok.</div>';
+      main.insertAdjacentHTML('beforeend', `<h2 style="margin-top:28px">Word belgeleri</h2><div class="bs-sub">egUDF .docx dosyalarını Word gibi açar ve kaydeder. Çift tıklayınca egUDF ile açılmaları için Windows'ta varsayılan uygulama yapın.</div><button class="btn" data-act="docxDefault">${icon('word')}.docx için varsayılan uygulama…</button>`);
+      $('[data-act="docxDefault"]', main).onclick = () => native.defaultApps();
     } else {
       close();
       runCmd(k);
@@ -620,6 +773,7 @@ function setPageFormat(tab, patch) {
 function markMetaDirty(tab) {
   tab._hHtml = undefined;
   tab._fHtml = undefined;
+  applyGeometry(tab);
   onDocChange(tab);
   tab.editor.commands.repaginate();
 }
@@ -877,7 +1031,7 @@ async function runCmd(name, arg, el) {
     case 'close': if (tab) await closeTab(tab); return;
     case 'exportPdf': {
       if (!tab) return;
-      const path = await native.saveDialog({ defaultPath: `${tab.path ? tab.path.replace(/\.udf$/i, '') : tab.title}.pdf`, kind: 'pdf' });
+      const path = await native.saveDialog({ defaultPath: `${tab.path ? stem(tab.path) : tab.title}.pdf`, kind: 'pdf' });
       if (!path) return;
       const bytes = await makePdf(tab);
       await native.writeFile(path, bytes);
@@ -886,7 +1040,7 @@ async function runCmd(name, arg, el) {
     }
     case 'exportDocx': {
       if (!tab) return;
-      const base = tab.path ? tab.path.replace(/\.udf$/i, '') : tab.importedFrom ? tab.importedFrom.replace(/\.docx$/i, ' (egUDF)') : tab.title;
+      const base = tab.path ? (tab.format === 'docx' ? `${stem(tab.path)} (kopya)` : stem(tab.path)) : tab.title;
       const path = await native.saveDialog({ defaultPath: `${base}.docx`, kind: 'docx' });
       if (!path) return;
       await native.writeFile(path, exportDocx(tab.editor.getJSON(), tab.meta, tab.review));
@@ -1186,7 +1340,7 @@ async function runCmd(name, arg, el) {
     case 'uyapOpen': native.uyap.open(); return;
     case 'uyapSend': if (tab) uyapSendFlow(app, tab); return;
     case 'uyapAttach': {
-      if (!tab?.path || tab.dirty) { toast('Önce belgeyi kaydedip imzalayın.', { type: 'warn' }); return; }
+      if (!tab?.path || tab.dirty || tab.format === 'docx') { toast('Önce belgeyi .udf olarak kaydedip imzalayın.', { type: 'warn' }); return; }
       const r = await native.uyap.attach(tab.path);
       toast(r.ok ? 'Dosya portalın yükleme alanına eklendi.' : r.error, { type: r.ok ? 'ok' : 'warn', ms: 6000 });
       return;
@@ -1237,7 +1391,7 @@ async function autosave(force = false) {
   for (const t of app.tabs) {
     if (!isDirty(t) || (!force && t._autoRev === t.rev)) continue;
     t._autoRev = t.rev;
-    const data = { v: 1, session: SESSION, title: t.title, path: t.path, at: new Date().toISOString(), meta: t.meta, doc: t.editor.getJSON(), review: t.review };
+    const data = { v: 1, session: SESSION, title: t.title, path: t.path, format: t.format, at: new Date().toISOString(), meta: t.meta, doc: t.editor.getJSON(), review: t.review };
     try { await native.recovery.write(recoveryKey(t), JSON.stringify(data)); } catch (e) { console.warn('autosave failed', e); }
   }
 }
@@ -1259,7 +1413,7 @@ async function offerRecovery() {
         for (const r of list) {
           if (!keys.has(r.key)) continue;
           const d = r.data;
-          const t = newTab({ title: d.title, path: d.path, doc: d.doc, meta: d.meta, review: d.review });
+          const t = newTab({ title: d.title, path: d.path, doc: d.doc, meta: d.meta, review: d.review, format: d.format || 'udf' });
           t.dirty = true;
           t._recovered = true;
           await native.recovery.remove(r.key);
@@ -1683,7 +1837,7 @@ function wireChrome() {
     for (const f of files) {
       const p = native.pathForFile(f);
       if (p) await openPath(p);
-      else if (/\.docx$/i.test(f.name)) await openDocx(null, new Uint8Array(await f.arrayBuffer()));
+      else if (/\.docx$/i.test(f.name)) await openDocx(null, new Uint8Array(await f.arrayBuffer()), f.name);
       else await openBytes(new Uint8Array(await f.arrayBuffer()), { path: null, title: f.name.replace(/\.udf$/i, '') });
     }
   }, true);
@@ -1703,14 +1857,57 @@ function wireChrome() {
 
 // ================================================================== smoke scenario (npm run smoke)
 
+// a Word-like test document: Calibri 11, heading, numbered list, table, comment thread, tracked changes
+function smokeWordMeta() {
+  const m = newDocMeta();
+  m.base = { family: 'Calibri', size: 11 };
+  return m;
+}
+function smokeWordDoc() {
+  const A = (o = {}) => ({ ...defaultParaAttrs(), spaceBelow: 8, lineSpacing: 0.08, ...o });
+  const T = (text, marks) => ({ type: 'text', text, ...(marks ? { marks } : {}) });
+  const li = (text, n) => ({ type: 'paragraph', attrs: A({ leftIndent: 36, firstLineIndent: -18, list: { kind: 'number', type: 'NUMBER_TYPE_NUMBER_DOT', id: '1', level: 1 } }), content: [T(text)] });
+  const cell = (text) => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [300], udf: {} }, content: [{ type: 'paragraph', attrs: A({ spaceBelow: 0 }), content: [T(text)] }] });
+  return { type: 'doc', content: [
+    { type: 'paragraph', attrs: A({ align: 'center', spaceBelow: 12 }), content: [T('SÖZLEŞME BAŞLIĞI', [{ type: 'bold' }, { type: 'textStyle', attrs: { fontFamily: 'Cambria', fontSize: '16pt', color: '#1f3864' } }])] },
+    { type: 'paragraph', attrs: A({ align: 'justify', firstLineIndent: 28.35 }), content: [T('Taraflar arasında '), T('aşağıdaki', [{ type: 'comment', attrs: { id: 'c1' } }]), T(' koşullarla '), T('yeni ', [{ type: 'insertion', attrs: { author: 'Ayşe', at: '2026-01-02T10:00:00Z' } }]), T('eski ', [{ type: 'deletion', attrs: { author: 'Ayşe', at: '2026-01-02T10:00:00Z' } }]), T('anlaşılmıştır.', [{ type: 'italic' }])] },
+    li('Birinci madde', 1), li('İkinci madde', 2), li('Üçüncü madde', 3),
+    { type: 'table', attrs: { udf: { border: 'borderCell' } }, content: [{ type: 'tableRow', attrs: { udf: {} }, content: [cell('Ad'), cell('Değer')] }, { type: 'tableRow', attrs: { udf: {} }, content: [cell('Tutar'), cell('1.500 TL')] }] },
+    { type: 'paragraph', attrs: A(), content: [T('Son paragraf.', [{ type: 'highlight', attrs: { color: '#ffff00' } }])] },
+  ] };
+}
+function smokeWordReview() {
+  return { comments: [{ id: 'c1', author: 'Mehmet Kaya', at: '2026-01-02T09:00:00Z', text: 'Bunu netleştirelim.', quote: 'aşağıdaki', resolved: false, replies: [{ author: 'Ayşe', at: '2026-01-02T11:00:00Z', text: 'Tamam.' }] }] };
+}
+
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     $('#modal-root').innerHTML = '';
     switch (step) {
-      case 'start': return { ok: true, tabs: app.tabs.length };
+      case 'start': setZoom(1); return { ok: true, tabs: app.tabs.length }; // dev page views leave 70 % in the profile
+      case 'page9': { // dev: computed styles of the first paragraphs
+        const ps = [...app.active.editor.view.dom.querySelectorAll(':scope > p')].slice(0, 12);
+        const v = app.active.editor.view;
+        const before = paginationKey.getState(v.state).breaks.length;
+        app.active.editor.commands.repaginate();
+        await wait(400);
+        return { ok: true, before, breaks: paginationKey.getState(v.state).breaks, op: !!v.dom.offsetParent, geom: app.active.geom, domH: v.dom.offsetHeight, sheet: app.active.sheet.className, ps: ps.map((p) => { const cs = getComputedStyle(p); const sp = p.querySelector('span[style]'); return { t: p.textContent.slice(0, 14), style: p.getAttribute('style'), mt: cs.marginTop, mb: cs.marginBottom, pt: cs.paddingTop, pb: cs.paddingBottom, lh: cs.lineHeight, ff: sp ? getComputedStyle(sp).fontFamily : cs.fontFamily }; }) };
+      }
+      case 'page1': case 'page2': case 'page3': { // dev: one whole page of the opened file at 70 % (compare with Word's PDF)
+        const t = app.active;
+        if (!t) return { ok: false };
+        document.body.classList.add('focus-mode');
+        $('#review-pane')?.classList.add('hidden');
+        setZoom(0.7);
+        await wait(700);
+        const i = Number(step.slice(4)) - 1;
+        t.host.scrollTop = ((t.pageBoxes?.tops[i] || 0) + 0) * app.zoom + (t.host.querySelector('.zoom-box').offsetTop || 0) - 4;
+        await wait(300);
+        return { ok: true, pages: t.pages, geom: { top: t.geom.top, firstTop: t.geom.firstTop, bottom: t.geom.bottom } };
+      }
       case 'scroll-mid': { const t = app.active; if (!t) return { ok: true, skipped: true }; t.host.scrollTop = t.host.scrollHeight * 0.3; await wait(300); return { ok: true }; }
       case 'opened': { // a file given on the command line, a moment later
         await wait(1500);
@@ -1810,7 +2007,75 @@ window.__smoke = {
         const t2 = await openPath(p);
         await wait(500);
         const same = docText(t2.editor.getJSON()) === docText(t.editor.getJSON());
-        return { ok: !!t2 && same && t2.dirty, bytes: bytes.length, same };
+        return { ok: !!t2 && same && !t2.dirty && t2.format === 'docx', bytes: bytes.length, same, format: t2?.format };
+      }
+      case 'docx-save': { // a Word document is edited and saved as Word, comments and changes included
+        const p = `${out}${sep}native.docx`;
+        await native.writeFile(p, exportDocx(smokeWordDoc(), smokeWordMeta(), smokeWordReview()));
+        const t = await openPath(p);
+        await wait(400);
+        const ed = t.editor;
+        ed.commands.setTextSelection(ed.state.doc.content.size - 1);
+        ed.commands.insertContent(' Eklendi.');
+        const dirty = t.dirty;
+        await save(t, { quiet: true });
+        const back = importDocx(await native.readFile(p));
+        const txt = docText(back.doc);
+        const json = JSON.stringify(back.doc);
+        return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
+          comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'docx-header': { // a tall Word header pushes the body down instead of overlapping it
+        setZoom(1);
+        const meta = smokeWordMeta();
+        meta.pageFormat.headerFOffset = '20';
+        meta.pageFormat.topMargin = '50';
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        meta.header = { attrs: { background: '-1', foreground: '-16777216', startPage: '1' }, content: ['AVUKAT ADI SOYADI', 'Adres satırı 1', 'Adres satırı 2', 'Tel: 0212 000 00 00', 'E-posta: avukat@example.com', 'Sicil: 12345'].map(P) };
+        const body = { type: 'doc', content: Array.from({ length: 60 }, (_, i) => P(`Gövde paragrafı ${i + 1}. Lorem ipsum dolor sit amet, consectetur adipiscing elit.`)) };
+        const p = `${out}${sep}header.docx`;
+        await native.writeFile(p, exportDocx(body, meta));
+        const t = await openPath(p);
+        await wait(900);
+        const z = app.zoom;
+        const sheet = t.sheet.getBoundingClientRect();
+        const hdrs = [...t.overlay.querySelectorAll('.pg-header')].map((e) => { const r = e.getBoundingClientRect(); return { top: (r.top - sheet.top) / z, bottom: (r.bottom - sheet.top) / z }; });
+        const paras = [...t.editor.view.dom.querySelectorAll(':scope > p')];
+        const firstTop = (paras[0].getBoundingClientRect().top - sheet.top) / z;
+        // first paragraph of page 2 = the one right after the first spacer
+        const sp = t.editor.view.dom.querySelector('.page-spacer');
+        const p2Top = sp ? (sp.getBoundingClientRect().bottom - sheet.top) / z : null;
+        const clear1 = hdrs[0] && firstTop >= hdrs[0].bottom - 1;
+        const clear2 = hdrs[1] && p2Top != null && p2Top >= hdrs[1].bottom - 1;
+        t.host.scrollTop = 0;
+        return { ok: !!(clear1 && clear2 && t.pages >= 2), hdr: hdrs.slice(0, 2), firstTop, p2Top, pages: t.pages, top: t.geom.top, marginTop: t.geom.marginTop };
+      }
+      case 'wordpaste': { // paste from Word = open the .docx Word put on the clipboard
+        const d = await native.readOffice();
+        let pkg = d && wordPackage(d.embed);
+        const real = !!pkg;
+        let text = d?.text || '';
+        if (!pkg) { pkg = exportDocx(smokeWordDoc(), smokeWordMeta(), smokeWordReview()); text = 'x\r\n'; }
+        const want = importDocx(pkg, { base: { family: 'Times New Roman', size: 12 } });
+        const t = newDocument('blank');
+        await wait(200);
+        const r = pasteDocx(t.editor, pkg, { text, base: t.meta.base, review: t.review });
+        await wait(400);
+        const got = t.editor.getJSON().content;
+        const strip = (b) => JSON.stringify(t.editor.schema.nodeFromJSON(b).toJSON(), (k, v) => (k === 'id' && typeof v === 'string' ? '*' : v));
+        const sameBlocks = got.length === want.doc.content.length && got.every((b, i) => strip(b) === strip(want.doc.content[i]));
+        // a few words pasted mid-sentence stay in that paragraph
+        const t2 = newDocument('blank');
+        await wait(150);
+        t2.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text: 'Bir iki' }] }] });
+        t2.editor.commands.setTextSelection(5);
+        pasteDocx(t2.editor, exportDocx({ type: 'doc', content: [{ type: 'paragraph', attrs: { ...defaultParaAttrs(), align: 'center' }, content: [{ type: 'text', text: 'ARA ', marks: [{ type: 'bold' }] }] }] }, smokeWordMeta()), { text: 'ARA ', base: t2.meta.base });
+        const inl = t2.editor.getJSON().content;
+        const inline = inl.length === 1 && inl[0].attrs.align === 'left' && docText(t2.editor.getJSON()) === 'Bir ARA iki';
+        t2.dirty = false;
+        await closeTab(t2);
+        activate(t);
+        return { ok: sameBlocks && inline && (real || (r.comments === 1 && t.review.comments.length === 1)), real, blocks: got.length, wantBlocks: want.doc.content.length, sameBlocks, inline, firstDiff: sameBlocks ? null : (() => { const i = got.findIndex((b, k) => strip(b) !== strip(want.doc.content[k])); return [i, strip(got[i])?.slice(0, 300), strip(want.doc.content[i])?.slice(0, 300)]; })() };
       }
       case 'ruler': {
         const t = newDocument('blank');

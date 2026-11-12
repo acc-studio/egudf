@@ -39,6 +39,26 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
   - The context menu is drawn by the renderer; main forwards Chromium's params, including spelling.
 - **Smoke harness:** `--only=a,b` runs selected steps. results.json is written after every step, so a hang leaves partial results. Screenshots call `webContents.invalidate()` first; otherwise hidden windows return stale frames. In the hidden smoke window, status-bar UI refreshes lag (requestAnimationFrame), so assert on state, not on the status DOM.
 
+## Word documents (0.14)
+
+- **Native .docx tabs:** `tab.format === 'docx'`. Save writes `exportDocx`, and Save As picks the format from the extension. Signing, UYAP and collab need .udf. `importDocx().warnings` lists what export would drop; the user is asked before overwriting the original.
+- **Word-only model data:** none of it is written to UDF.
+  - Paragraph attrs `lineRule/lineHeight`, `pageBreakBefore`, `keepNext`, `border`, `shading`, `strut`.
+  - `fmt` on table, row and cell.
+  - textStyle `letterSpacing/smallCaps/allCaps/dstrike`.
+  - The `hardBreak` node: `splitBreaks` turns it into one UDF paragraph per line.
+  - `tabSet` is `pos:align:leader`, using Java Swing TabStop codes (shared with UDF).
+- **Word rendering:** the sheet gets class `word-hf`.
+  - Spacing uses `--sa/--sb` as collapsing margins (Word = max(after, next before); verified via COM). UDF keeps padding.
+  - `--lhf` is the base font's single-line factor.
+  - `strut` sets a paragraph's font when all its runs are smaller or another family (CSS line boxes have a strut, Word doesn't).
+  - Tabs come from the `TabStops` plugin (`src/editor/tabs.js`); the header/footer overlay uses `layoutTabsDom`.
+- **Header/footer fitting:** `fitHeaderFooter` measures header/footer HTML and sets `geom.top/firstTop/bottom`. Pagination supports a different first-page top (`L.firstTop`).
+- **Paste from Word:** `clipboard.readBuffer('Embed Source')` is an OLE compound file whose `Package` stream is the selection as a .docx (`src/interop/cfb.js`, `paste.js`). Only used when the clipboard HTML is Word's. Pasted text ends with a newline iff the last paragraph mark was copied.
+- **Office cloud fonts** (Aptos…) live in `%LOCALAPPDATA%\Microsoft\FontCache\4\CloudFonts\<Family>\<id>.ttf`, invisible to Chromium. `lib/officefonts.js` lists them and the renderer registers the ones a document uses as FontFaces.
+- **.docx association:** `build/installer.nsh` (UTF-8 BOM) registers egUDF as a capable handler: OpenWithProgids + RegisteredApplications. Don't add .docx to `fileAssociations`: electron-builder's `APP_ASSOCIATE` overwrites the user's .docx default.
+- **Testing against Word:** Word 16 is installed and scriptable over COM (PowerShell). Build test documents with Word itself, rather than viewing client files, and compare with `ExportAsFixedFormat` PDFs (PyMuPDF is installed). Smoke `page1..3` (dev-only, via `--only`) show whole pages at 70 %; `page9` dumps computed paragraph styles. Word here is Turkish, so use built-in style constants, not English style names.
+
 ## Signing
 
 - `sign.sgn` = DER CMS SignedData, detached, SHA-256 over raw `content.xml` bytes, one cert, signed attrs contentType/signingTime/messageDigest/signingCertificateV2 (ESSCertIDv2 with issuerSerial, default hash omitted), digest AlgorithmIdentifiers without NULL, sha256WithRSA with NULL. The test compares our OpenSSL dump with a real UYAP signature — keep it identical.
@@ -60,4 +80,6 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
   - Use `settle(st)` (src/spelling.js) in tests: dictionary answers arrive asynchronously.
 - **Page numbers**: `pageNumber-spec=BSP32_<flags>` is inferred, not documented (see `src/udf/pagenum.js`). 2048 means "with total"; the values egUDF writes match the real files (72, 40, 2120, 2088).
 - PowerShell 5.1 `Get-Content/Set-Content` corrupt Turkish UTF-8 — use the file tools.
-- Scripted source edits: `String.replace` treats `$'`/`$&` in the replacement as patterns (`'history$'` appended the rest of the file once). Use `split(a).join(b)`, or the Edit tool. Bash heredocs in this environment can also mangle `$'…` and `\t`.
+- **Scripted source edits:**
+  - Inside a JS template literal in a patch script, `\b` becomes a backspace byte (0x08) and `\s`/`\d` lose their backslash. Write regex-bearing patches with `String.raw` or the Edit tool. Check with a control-character scan.
+  - `String.replace` treats `$'`/`$&` in the replacement as patterns (`'history$'` appended the rest of the file once). Use `split(a).join(b)`, or the Edit tool. Bash heredocs in this environment can also mangle `$'…` and `\t`.

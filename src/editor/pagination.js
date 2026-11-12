@@ -18,6 +18,7 @@ export const paginationKey = new PluginKey('pagination');
 /**
  * Pagination.configure({ getLayout, onLayout })
  * getLayout() → { pageH, top, bottom, gap } in layout px, plus `sheet` (element containing the editor)
+ *   and optional `firstTop`: page 1's top (no header there, or a taller first-page header)
  * onLayout({ pages, spacers: [{ y, fill }], lastFill }) — called after spacers are placed
  */
 export const Pagination = Extension.create({
@@ -121,9 +122,14 @@ function measure(view, L) {
   if (!dom.offsetWidth) return null;
   const scale = domRect.width / dom.offsetWidth || 1;
   const H = L.pageH - L.top - L.bottom;
-  if (H <= 20) return null;
+  const top1 = L.firstTop ?? L.top;
+  const H1 = L.pageH - top1 - L.bottom; // page 1 may start lower/higher than the rest
+  if (H <= 20 || H1 <= 20) return null;
+  const pageOf = (t) => (t < H1 ? 0 : 1 + Math.floor((t - H1) / H));
+  const pageStart = (k) => (k ? H1 + (k - 1) * H : 0);
+  const pageEnd = (k) => H1 + k * H;
   const spacers = spacerBoxes(dom);
-  const origin = domRect.top + L.top * scale;
+  const origin = domRect.top + top1 * scale;
   const toContent = (y) => {
     let sub = 0;
     for (const s of spacers) if (s.top < y - 0.5) sub += s.h;
@@ -153,8 +159,9 @@ function measure(view, L) {
       return;
     }
     if (node.type.name !== 'paragraph') { units.push({ pos: offset, top: pTop, bottom: pBottom }); return; }
+    const force = !!node.attrs.pageBreakBefore; // Word page break: this paragraph starts a page
     const lines = lineRects(el);
-    if (lines.length <= 1) { units.push({ pos: offset, top: pTop, bottom: pBottom }); return; }
+    if (lines.length <= 1) { units.push({ pos: offset, top: pTop, bottom: pBottom, force }); return; }
     // convert each line edge to content space first, then take midpoints —
     // a midpoint taken in screen space can fall inside a spacer
     const ct = lines.map((l) => ({ top: toContent(l.top), bottom: toContent(l.bottom) }));
@@ -172,27 +179,32 @@ function measure(view, L) {
         }
         pos = p;
       }
-      units.push({ pos, top, bottom });
+      units.push({ pos, top, bottom, ...(i === 0 && force ? { force } : {}) });
     }
   });
 
+  // The current page only advances when a break is placed: a page is never "entered"
+  // by position alone (a line ending a hair past the page end, within tolerance, must
+  // not make the next line count as already on the next page — it has no spacer).
   const breaks = [];
   let shift = 0;
   let end = 0;
+  let cur = 0;
   for (const u of units) {
     const t = u.top + shift, b = u.bottom + shift;
-    const page = Math.floor((t + 0.5) / H);
-    if (b > (page + 1) * H + 0.5 && t > page * H + 0.5) {
-      const fill = (page + 1) * H - t;
+    if (t >= pageEnd(cur) + H) cur = pageOf(t); // after a unit taller than a page
+    if ((u.force || b > pageEnd(cur) + 0.5) && t > pageStart(cur) + 0.5) {
+      const fill = Math.max(0, pageEnd(cur) - t);
       if (!breaks.length || breaks[breaks.length - 1].pos !== u.pos) {
         breaks.push(u.cells ? { pos: u.pos, fill, cells: u.cells } : { pos: u.pos, fill });
         shift += fill;
+        cur++;
       }
     }
     end = Math.max(end, u.bottom + shift);
   }
-  const pages = Math.max(1, Math.ceil((end - 0.5) / H));
-  const lastFill = pages * H - end;
+  const pages = Math.max(cur + 1, end - 0.5 <= H1 ? 1 : 1 + Math.ceil((end - 0.5 - H1) / H));
+  const lastFill = pageEnd(pages - 1) - end;
   return { breaks, pages, lastFill, H };
 }
 

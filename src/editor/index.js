@@ -7,8 +7,9 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import {
   UdfParagraph, UdfRun, UdfImage, UdfTable, UdfTableRow, UdfTableCell, TableHeader,
-  LegalKeys, UdfCommands, ListLabels, Search,
+  LegalKeys, UdfCommands, ListLabels, Search, TextEffects,
 } from './extensions.js';
+import { TabStops } from './tabs.js';
 import { Pagination } from './pagination.js';
 import { AutoCorrect } from './autocorrect.js';
 import { Spell } from './spell.js';
@@ -29,12 +30,13 @@ export function baseExtensions() {
       codeBlock: false,
       code: false,
       horizontalRule: false,
-      hardBreak: false,
+      hardBreak: { keepMarks: true },
       link: false,
       trailingNode: false,
     }),
     UdfParagraph,
     TextStyle,
+    TextEffects,
     FontFamily,
     FontSize,
     Color,
@@ -59,9 +61,11 @@ export function baseExtensions() {
 function UdfTableHeader() { return TableHeader; }
 
 /**
- * createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection })
+ * createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection, onPaste })
+ * onPaste(event) → true when it handled the paste itself
+ * defaultTab() → default tab stop interval in pt
  */
-export function createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection, paginate = true }) {
+export function createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection, onPaste, defaultTab, paginate = true }) {
   const editor = new Editor({
     element,
     content,
@@ -73,10 +77,12 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       AutoCorrect,
       Spell,
       CollabPeers,
+      TabStops.configure({ defaultTab: defaultTab || (() => 36) }),
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],
     editorProps: {
       attributes: { class: 'udf-doc', spellcheck: 'true', lang: 'tr' },
+      handlePaste: (_view, event) => onPaste?.(event) === true,
     },
     onUpdate: ({ editor: e, transaction }) => onUpdate?.(e, transaction),
     onSelectionUpdate: ({ editor: e }) => onSelection?.(e),

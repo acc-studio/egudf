@@ -1,6 +1,6 @@
 {
   "name": "egudf",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "egUDF — UYAP .udf editor with e-imza signing",
   "main": "main.js",
   "scripts": {
@@ -80,7 +80,8 @@
     },
     "nsis": {
       "oneClick": true,
-      "perMachine": false
+      "perMachine": false,
+      "include": "build/installer.nsh"
     },
     "fileAssociations": [
       {

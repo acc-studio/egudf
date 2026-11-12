@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { detectDrivers, listCertificates, signContent, friendlyError } from './sign/pkcs11.js';
 import { verifyDetached } from './sign/verify.js';
 import { createSpellService } from './lib/spellcheck.js';
+import { officeFonts, officeFontBytes } from './lib/officefonts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Spellcheck with the bundled Hunspell dictionaries in the renderer, not the
@@ -295,10 +296,10 @@ ipcMain.handle('file:write', (_e, p, bytes) => {
 });
 ipcMain.handle('file:exists', (_e, p) => fs.existsSync(p));
 ipcMain.handle('dialog:save', async (_e, { defaultPath, kind }) => {
-  const filters = kind === 'pdf'
-    ? [{ name: 'PDF', extensions: ['pdf'] }]
-    : kind === 'docx' ? [{ name: 'Word belgesi (.docx)', extensions: ['docx'] }]
-      : [{ name: 'UYAP Doküman (.udf)', extensions: ['udf'] }];
+  const UDF = { name: 'UYAP Doküman (.udf)', extensions: ['udf'] }, DOCX = { name: 'Word belgesi (.docx)', extensions: ['docx'] };
+  // doc-udf / doc-docx: Save / Save As, either format (the chosen name decides)
+  const filters = kind === 'pdf' ? [{ name: 'PDF', extensions: ['pdf'] }]
+    : kind === 'docx' ? [DOCX] : kind === 'doc-udf' ? [UDF, DOCX] : kind === 'doc-docx' ? [DOCX, UDF] : [UDF];
   const r = await dialog.showSaveDialog(win, { defaultPath: defaultPath || app.getPath('documents'), filters });
   return r.canceled ? null : r.filePath;
 });
@@ -313,9 +314,22 @@ ipcMain.handle('font:bundled', (_e, name) => {
 });
 ipcMain.handle('shell:showInFolder', (_e, p) => shell.showItemInFolder(p));
 ipcMain.on('app:close-ok', () => { allowClose = true; win?.close(); });
+// Windows Settings → Default apps → egUDF (registered by the installer, see build/installer.nsh)
+ipcMain.handle('fonts:office', () => Object.fromEntries(Object.entries(officeFonts()).map(([k, v]) => [k, v.faces])));
+ipcMain.handle('fonts:officeBytes', (_e, file) => officeFontBytes(file));
+ipcMain.handle('app:defaultApps', () => shell.openExternal(process.platform === 'win32' ? 'ms-settings:defaultapps?registeredAppUser=egUDF' : 'about:blank'));
 ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, smoke: SMOKE != null }));
 ipcMain.handle('clipboard:writeText', (_e, t) => clipboard.writeText(String(t)));
 ipcMain.handle('clipboard:readText', () => clipboard.readText());
+// Word puts the copied selection on the clipboard as a complete .docx inside an
+// OLE "Embed Source" object; pasting from it is as faithful as opening the file.
+ipcMain.handle('clipboard:office', () => {
+  try {
+    const embed = clipboard.readBuffer('Embed Source');
+    if (!embed?.length) return null;
+    return { embed: new Uint8Array(embed), text: clipboard.readText(), html: clipboard.readHTML() };
+  } catch { return null; }
+});
 ipcMain.handle('edit:do', (e, role, arg) => {
   const wc = e.sender;
   if (role === 'replaceMisspelling') wc.replaceMisspelling(String(arg));
@@ -516,7 +530,7 @@ async function runSmoke() {
   if (flag('pgdebug') != null) await win.webContents.executeJavaScript('window.__pgDebugOnly = true');
   let steps = await win.webContents.executeJavaScript('window.__smoke.steps()');
   const only = flag('only');
-  if (only) steps = steps.filter((st) => only.split(',').includes(st));
+  if (only) { const want = only.split(','); steps = [...steps.filter((st) => want.includes(st)), ...want.filter((st) => /^page\d$/.test(st))]; } // page1..9: dev-only page views
   const results = {};
   for (const step of steps) {
     try {

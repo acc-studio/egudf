@@ -17,8 +17,12 @@ contextBridge.exposeInMainWorld('native', {
   showInFolder: (p) => ipcRenderer.invoke('shell:showInFolder', p),
   bundledFont: (name) => ipcRenderer.invoke('font:bundled', name),
   info: () => ipcRenderer.invoke('app:info'),
+  defaultApps: () => ipcRenderer.invoke('app:defaultApps'),
+  officeFonts: () => ipcRenderer.invoke('fonts:office'),
+  officeFontBytes: (file) => ipcRenderer.invoke('fonts:officeBytes', file),
   copyText: (t) => ipcRenderer.invoke('clipboard:writeText', t),
   readText: () => ipcRenderer.invoke('clipboard:readText'),
+  readOffice: () => ipcRenderer.invoke('clipboard:office'),
   edit: (role, arg) => ipcRenderer.invoke('edit:do', role, arg),
   setTheme: (t) => ipcRenderer.invoke('theme:set', t),
   // Hunspell (main process); the editor draws its own underlines
