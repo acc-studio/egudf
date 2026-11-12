@@ -922,7 +922,7 @@ export function importDocx(bytes, opts = {}) {
         for (const side of ['top', 'left', 'bottom', 'right', 'start', 'end']) { const e = kid(mar, side); if (e) cpad[side === 'start' ? 'left' : side === 'end' ? 'right' : side] = (parseFloat(wa(e, 'w')) || 0) / 20; }
         if (Object.keys(cpad).length) fmt.pad = cpad;
         const content = parseBlocks(tc, rels, wTw - 216, styleId);
-        const cell = { type: 'tableCell', attrs: { colspan: span, rowspan: 1, colwidth: wTw ? [Math.max(24, Math.round(wTw / 15))] : null, udf: {}, fmt: Object.keys(fmt).length ? fmt : null }, content: content.length ? content : [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
+        const cell = { type: 'tableCell', attrs: { colspan: span, rowspan: 1, colwidth: wTw ? (span > 1 && grid.length >= gi + span ? grid.slice(gi, gi + span).map((g) => Math.max(24, Math.round(g / 15))) : [Math.max(24, Math.round(wTw / 15))]) : null, /* one width per spanned column */ udf: {}, fmt: Object.keys(fmt).length ? fmt : null }, content: content.length ? content : [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
         if (vmVal === 'restart') open[gi] = cell; else delete open[gi];
         cells.push(cell);
         gi += span;

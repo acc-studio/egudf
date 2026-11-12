@@ -2015,7 +2015,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2158,6 +2158,37 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'htmlpaste': { // HTML from Word Online / Outlook / Google Docs / web: lists, spacing, tabs, fonts
+        const wordHtml = `<html><head><style>p.MsoNormal{margin:0cm;margin-bottom:8.0pt;line-height:107%;font-size:11.0pt;font-family:"Calibri",sans-serif;}
+p.MsoListParagraphCxSpFirst{margin-top:0cm;margin-right:0cm;margin-bottom:0cm;margin-left:36.0pt;font-size:11.0pt;font-family:"Calibri",sans-serif;}
+p.MsoListParagraphCxSpLast{margin-top:0cm;margin-right:0cm;margin-bottom:8.0pt;margin-left:36.0pt;font-size:11.0pt;font-family:"Calibri",sans-serif;}</style></head><body>
+<p class=MsoNormal style='tab-stops:right dotted 451.0pt'>Bedel<span style='mso-tab-count:1'>\t</span>1.500.000 TL<o:p></o:p></p>
+<p class=MsoListParagraphCxSpFirst style='text-indent:-18.0pt;mso-list:l1 level1 lfo2'><![if !supportLists]><span style='font-family:Symbol'><span style='mso-list:Ignore'>·<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp;&nbsp; </span></span></span><![endif]>Devreden<o:p></o:p></p>
+<p class=MsoListParagraphCxSpLast style='margin-left:72.0pt;text-indent:-18.0pt;mso-list:l2 level2 lfo3'><![if !supportLists]><span><span style='mso-list:Ignore'>b)<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span></span><![endif]>Alt madde <span style='background:yellow;mso-highlight:yellow'>vurgulu</span><o:p></o:p></p>
+</body></html>`;
+        const gdocs = `<meta charset="utf-8"><b style="font-weight:normal" id="docs-internal-guid-1"><ol style="margin-top:0;margin-bottom:0"><li><p>Birinci</p></li><li><p>İkinci</p><ul><li><p>Alt</p></li></ul></li></ol><p>Son</p></b>`;
+        const t = newDocument('blank');
+        await wait(200);
+        const v = t.editor.view;
+        const paste = (html) => { t.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: defaultParaAttrs() }] }); v.pasteHTML(html); return t.editor.getJSON().content; };
+        const w = paste(wordHtml);
+        const g = paste(gdocs);
+        const lt = (p) => p.attrs.list && `${p.attrs.list.kind}:${p.attrs.list.type}:${p.attrs.list.level}`;
+        const r = {
+          wTab: w[0]?.attrs.tabSet, wSpace: w[0]?.attrs.spaceBelow, wLs: w[0]?.attrs.lineSpacing,
+          wFont: JSON.stringify(w[0]?.content?.[0]?.marks || []).includes('Calibri'),
+          wList: w.slice(1, 3).map(lt), wText: w[1] && docText({ type: 'doc', content: [w[1]] }), wIndent: w[2]?.attrs.leftIndent,
+          wHl: JSON.stringify(w[2] || {}).includes('"highlight"'),
+          gList: g.map(lt), gBold: JSON.stringify(g).includes('"bold"'),
+          ids: new Set(w.slice(1, 3).map((p) => p.attrs.list?.id)).size === 2 && w.slice(1, 3).every((p) => /^\d+$/.test(p.attrs.list?.id)),
+        };
+        t.dirty = false;
+        await closeTab(t);
+        const ok = r.wTab === '451:1:1' && r.wSpace === 8 && r.wLs === 0.07 && r.wFont && r.wList[0] === 'bullet:BULLET_TYPE_ELLIPSE:1' && r.wList[1] === 'number:NUMBER_TYPE_CHAR_SMALL_PARANTHESE:2'
+          && r.wText === 'Devreden' && r.wIndent === 72 && r.wHl && r.ids
+          && JSON.stringify(r.gList.slice(0, 4)) === JSON.stringify(['number:NUMBER_TYPE_NUMBER_DOT:1', 'number:NUMBER_TYPE_NUMBER_DOT:1', 'bullet:BULLET_TYPE_CIRCLE:2', null]) && !r.gBold;
+        return { ok, ...r };
       }
       case 'footnotes': { // Word footnotes at the bottom of their page, room reserved; insert + edit
         const P = (c) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), spaceBelow: 6 }, content: c });
@@ -2303,7 +2334,7 @@ window.__smoke = {
         t2.dirty = false;
         await closeTab(t2);
         activate(t);
-        return { ok: sameBlocks && inline && (real || (r.comments === 1 && t.review.comments.length === 1)), real, blocks: got.length, wantBlocks: want.doc.content.length, sameBlocks, inline, firstDiff: sameBlocks ? null : (() => { const i = got.findIndex((b, k) => strip(b) !== strip(want.doc.content[k])); return [i, strip(got[i])?.slice(0, 300), strip(want.doc.content[i])?.slice(0, 300)]; })() };
+        return { ok: sameBlocks && inline && (real || (r.comments === 1 && t.review.comments.length === 1)), real, blocks: got.length, wantBlocks: want.doc.content.length, sameBlocks, inline, firstDiff: sameBlocks ? null : (() => { const i = got.findIndex((b, k) => strip(b) !== strip(want.doc.content[k])); const x = strip(got[i]) || '', y = strip(want.doc.content[i]) || ''; let c = 0; while (c < x.length && x[c] === y[c]) c++; return [i, c, x.slice(Math.max(0, c - 80), c + 120), y.slice(Math.max(0, c - 80), c + 120)]; })() };
       }
       case 'ruler': {
         const t = newDocument('blank');

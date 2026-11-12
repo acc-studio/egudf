@@ -575,3 +575,30 @@ These come first among the Word features still missing: counted across the
     Inserting one through the dialog works, and all notes survive a Word
     round trip.
   - A unit test covers the .udf fallback.
+
+## 0.18.0: Pasting from anywhere keeps lists and formatting (iteration 17)
+
+Pasting from desktop Word was already exact (0.14). Word Online, Outlook,
+Google Docs, web pages and e-mail don't carry the embedded .docx, so they went
+through the browser's generic HTML paste and lost list structure, spacing and
+highlights.
+
+- **Word HTML** (Word Online, Outlook, Word when its .docx is missing):
+  - Lists stay lists, with the right style and level, read from the label
+    Word prints: "1.", "a)", "iii.", "(2)", bullets (•, ■, ○, ➤, ✓, –).
+  - Indents come with them.
+  - Word's class styles are applied: paragraph spacing, line spacing
+    ("107 %"), the paragraph font, tab stops with dot leaders.
+- **Google Docs, web pages:** bulleted and numbered lists, nested ones as
+  sub-levels, with their numbering style. Google Docs' invisible "bold"
+  wrapper no longer makes everything bold.
+- **Everywhere:**
+  - Text highlights (background colours) are kept.
+  - Pasted lists get their own numbering, independent of the document's lists.
+  - Pasting into an empty paragraph keeps the pasted paragraph's own
+    formatting, as in Word.
+- **Fix:** a Word table cell spanning several columns now keeps one width per
+  column, so its widths don't shift when pasted.
+- **Testing:** new smoke step `htmlpaste` covers Word-style HTML (with class
+  CSS, list paragraphs, tabs and highlight) and Google Docs-style nested
+  lists.

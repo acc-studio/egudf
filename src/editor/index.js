@@ -10,6 +10,8 @@ import {
   LegalKeys, UdfCommands, ListLabels, Search, TextEffects,
 } from './extensions.js';
 import { TabStops } from './tabs.js';
+import { Fragment, Slice } from '@tiptap/pm/model';
+import { normalizePastedHtml, remapPastedLists } from '../interop/htmlpaste.js';
 import { Pagination } from './pagination.js';
 import { AutoCorrect } from './autocorrect.js';
 import { Spell } from './spell.js';
@@ -41,7 +43,12 @@ export function baseExtensions() {
     FontFamily,
     FontSize,
     Color,
-    Highlight.configure({ multicolor: true }),
+    // pasted spans with a background colour (Word, web) are highlights too
+    Highlight.extend({
+      parseHTML() {
+        return [...(this.parent?.() || []), { tag: 'span', getAttrs: (el) => { const c = el.style.backgroundColor || el.style.background; return c && !/^(transparent|initial|inherit|white|#fff(fff)?|rgba?\(255, 255, 255)/i.test(c) ? { color: c } : false; } }];
+      },
+    }).configure({ multicolor: true }),
     Subscript,
     Superscript,
     UdfRun,
@@ -85,13 +92,31 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
     ],
     editorProps: {
       attributes: { class: 'udf-doc', spellcheck: 'true', lang: 'tr' },
-      handlePaste: (_view, event) => onPaste?.(event) === true,
+      handlePaste: (view, event, slice) => onPaste?.(event) === true || pasteIntoEmpty(view, slice),
+      // Word / web HTML: lists, class styles, tab stops (see src/interop/htmlpaste.js)
+      transformPastedHTML: (html) => normalizePastedHtml(html),
+      transformPasted: (slice, view) => remapPastedLists(slice, view.state.doc, Fragment, Slice),
     },
     onUpdate: ({ editor: e, transaction }) => onUpdate?.(e, transaction),
     onSelectionUpdate: ({ editor: e }) => onSelection?.(e),
     onTransaction: ({ editor: e, transaction }) => { if (!transaction.docChanged && transaction.selectionSet) return; onSelection?.(e); },
   });
   return editor;
+}
+
+/**
+ * Pasting paragraphs into an empty paragraph: they arrive with their own
+ * paragraph formatting (list, spacing, tabs…), as in Word. ProseMirror would
+ * merge the first one into the empty paragraph and keep the empty one's attributes.
+ */
+function pasteIntoEmpty(view, slice) {
+  const { $from, empty } = view.state.selection;
+  const first = slice.content.firstChild;
+  if (!empty || !$from.parent.isTextblock || $from.parent.content.size || !first?.isTextblock || slice.openStart === 0) return false;
+  const closed = new Slice(slice.content, 0, 0);
+  const tr = view.state.tr.replaceRange($from.before(), $from.after(), closed);
+  view.dispatch(tr.scrollIntoView().setMeta('paste', true).setMeta('uiEvent', 'paste'));
+  return true;
 }
 
 /** Static HTML for header/footer previews. */

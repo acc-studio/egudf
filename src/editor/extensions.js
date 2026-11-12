@@ -51,14 +51,17 @@ export const UdfParagraph = Paragraph.extend({
         rendered: false,
         parseHTML: (el) => {
           if (el.dataset.p) {
-            try { const v = JSON.parse(el.dataset.p)[k]; return v === undefined ? def : v; } catch {}
+            try { const v = JSON.parse(el.dataset.p)[k]; if (v !== undefined) return v; } catch {}
           }
+          // pasted HTML (Word, web): what the inline style says
           if (k === 'align') {
             const a = el.style.textAlign || el.getAttribute('align');
             return ['center', 'right', 'justify'].includes(a) ? a : 'left';
           }
-          if (k === 'leftIndent' && el.style.marginLeft) return toPt(el.style.marginLeft);
+          if (k === 'leftIndent' && el.style.marginLeft) return Math.max(0, toPt(el.style.marginLeft));
           if (k === 'firstLineIndent' && el.style.textIndent) return toPt(el.style.textIndent);
+          if (k === 'spaceAbove' && el.style.marginTop) return Math.max(0, toPt(el.style.marginTop));
+          if (k === 'spaceBelow' && el.style.marginBottom) return Math.max(0, toPt(el.style.marginBottom));
           return def;
         },
       };
