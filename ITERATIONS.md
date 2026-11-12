@@ -850,6 +850,11 @@ tables; headings with spacing. Word documents keep Word's rules.
   and outline level, the navigation pane, the saved Word style, and the .udf
   gallery coming back.
 
+## 0.33.1: New icon
+
+- egUDF gets egPDF's icon style: a cream page with a folded corner and coloured
+  lines. A teal corner and a signature stroke tell the two apps apart.
+
 ## 0.33.0: Word documents as .udf look like Word in UYAP (iteration 32)
 
 Checked against a heavily styled deed of amendment in Word and in the
