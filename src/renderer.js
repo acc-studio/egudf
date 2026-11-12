@@ -149,7 +149,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
   tab.editor = createEditor({
     element: $('.mount', host),
     content: doc,
-    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet }),
+    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx' }),
     onLayout: (L) => drawOverlay(tab, L),
     defaultTab: () => tab.meta.defaultTab || 36,
     onUpdate: (_e, tr) => onDocChange(tab, tr),
@@ -162,6 +162,14 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     },
   });
   setupSpell(app, tab);
+  // Ctrl+click on a link opens it (Word's behaviour); a plain click just places the caret
+  tab.editor.view.dom.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a.udf-link[href]');
+    if (!a || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const href = a.getAttribute('href');
+    if (/^(https?:|mailto:)/i.test(href)) window.open(href);
+  });
   Object.assign(tab.editor.storage.autocorrect, app.ac);
   tab.ruler = createRuler(app, tab);
   tab.ruler.setVisible(app.showRuler);
@@ -1905,8 +1913,10 @@ function smokeWordReview() {
   return { comments: [{ id: 'c1', author: 'Mehmet Kaya', at: '2026-01-02T09:00:00Z', text: 'Bunu netleştirelim.', quote: 'aşağıdaki', resolved: false, replies: [{ author: 'Ayşe', at: '2026-01-02T11:00:00Z', text: 'Tamam.' }] }] };
 }
 
+for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
+
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2049,6 +2059,42 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'docx-keep': { // Word documents: headings keep with the next paragraph, no widows/orphans
+        const P = (text, a = {}) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), ...a }, content: [{ type: 'text', text }] });
+        const content = [];
+        const long = 'Uzun bir paragraf, birkaç satıra yayılsın diye yazıldı; sayfa sonuna denk geldiğinde tek satırı bir sayfada bırakmamalı. '.repeat(3);
+        for (let k = 0; k < 60; k++) {
+          for (let i = 0; i <= (k * 3) % 7; i++) content.push(P(`Dolgu ${k}.${i}`));
+          content.push(P(`BAŞLIK ${k}`, { keepNext: true, spaceAbove: 6 }));
+          content.push(P(long));
+        }
+        const p = `${out}${sep}keep.docx`;
+        await native.writeFile(p, exportDocx({ type: 'doc', content }, smokeWordMeta()));
+        const t = await openPath(p);
+        await wait(1200);
+        const v = t.editor.view;
+        const count = () => { const c = { split: 0, widows: 0, headings: 0 }; v.state.doc.forEach((node, off) => {
+          if (node.attrs.keepNext) {
+            c.headings++;
+            const next = v.state.doc.nodeAt(off + node.nodeSize);
+            if (next && pageOfPos(v, off + 1) !== pageOfPos(v, off + node.nodeSize + 1)) c.split++;
+          } else if (node.textContent.length > 200) {
+            // first and last line of a long paragraph never alone on a page
+            const a = pageOfPos(v, off + 1), a2 = pageOfPos(v, off + 30);
+            const z = pageOfPos(v, off + node.nodeSize - 2), z2 = pageOfPos(v, off + node.nodeSize - 40);
+            if (a !== a2 || z !== z2) c.widows++;
+          }
+        }); return c; };
+        const r = count();
+        // the same document laid out like a .udf (UYAP has none of these rules) must break them somewhere
+        t.format = 'udf';
+        t.editor.commands.repaginate();
+        await wait(700);
+        const udf = count();
+        t.format = 'docx';
+        t.editor.commands.repaginate();
+        return { ok: r.headings === 60 && r.split === 0 && r.widows === 0 && t.pages >= 2 && udf.split + udf.widows > 0, ...r, pages: t.pages, udf };
       }
       case 'docx-to-udf': { // Word → .udf: the open tab becomes what UYAP will show
         const p = `${out}${sep}word2udf.docx`;

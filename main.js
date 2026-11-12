@@ -88,7 +88,7 @@ function createWindow() {
   });
   win.webContents.on('context-menu', (_e, p) => contextMenu(win, p));
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    if (/^(https?:|mailto:)/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   win.on('close', (e) => {

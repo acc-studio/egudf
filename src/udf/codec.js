@@ -131,7 +131,7 @@ export function defaultParaAttrs() {
     spaceAbove: 0, spaceBelow: 0, lineSpacing: 0, tabSet: null, list: null, extra: null,
     // Word-only paragraph properties (not written to UDF): lineRule 'exact'|'atLeast'
     // with lineHeight in pt; border { top|bottom|left|right: { style, width, color, space } }
-    lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, border: null, shading: null,
+    lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, keepLines: false, widowControl: true, border: null, shading: null,
     // strut { size (pt), family }: the paragraph's own font when it differs from the
     // document's — Word sizes lines from the runs (and empty paragraphs from the mark)
     strut: null,

@@ -520,3 +520,32 @@ UYAP itself could write test files.
   - New unit tests for every conversion rule and for the table layout.
   - New smoke step `docx-to-udf`.
   - Real UYAP files still re-save identically.
+
+## 0.16.0: Word's page-break rules, links, symbols (iteration 15)
+
+These come first among the Word features still missing: counted across the
+343 .docx files in Downloads (features only, no content).
+
+- **Word's pagination rules** (Word documents; .udf keeps UYAP's own layout,
+  which has none of them):
+  - "Keep with next" (90 of the 343 documents): a heading never sits alone
+    at the bottom of a page.
+  - "Keep lines together".
+  - Widow/orphan control, on by default as in Word: the first or last line
+    of a paragraph is never left alone on a page.
+  - egUDF's saved Word files now turn widow control on in their defaults, as
+    Word's Normal style does.
+- **Hyperlinks** (35 documents):
+  - Links stay links. Ctrl+click opens them in the browser; a plain click
+    places the cursor, as in Word.
+  - Pasted or typed web addresses become links.
+  - Saved back to .docx as real Word hyperlinks (checked in Word: address
+    intact). In .udf they are plain text, which is all UYAP has.
+- **Symbol characters** (Wingdings checkboxes ☐ ☒, ticks ✓, arrows…) were
+  dropped on import. They are now kept, with their font. Checked in Word and in
+  UYAP: both show them.
+- **Testing:**
+  - New smoke step `docx-keep`: 60 headings across 11 pages. None is
+    separated from its paragraph and no line is left alone. The same document
+    under .udf rules does split, which proves the rules are what holds it
+    together.

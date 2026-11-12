@@ -58,7 +58,7 @@ function paragraph(n, base, prevBelow) {
   }
   if (a.tabSet) a.tabSet = String(a.tabSet).split(',').map((t) => { const [p, al] = t.split(':'); return `${p}:${al || 0}:0`; }).join(',');
   const shade = a.shading;
-  Object.assign(a, { lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, border: null, shading: null });
+  Object.assign(a, { lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, keepLines: false, widowControl: true, border: null, shading: null });
   if (a.strut?.family) a.strut = { ...a.strut, family: uyapFont(a.strut.family) };
   const content = (n.content || []).map((c) => run(c, shade, base));
   return { ...n, attrs: a, ...(n.content ? { content } : {}) };

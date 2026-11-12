@@ -17,7 +17,8 @@ export const paginationKey = new PluginKey('pagination');
 
 /**
  * Pagination.configure({ getLayout, onLayout })
- * getLayout() → { pageH, top, bottom, gap } in layout px, plus `sheet` (element containing the editor)
+ * getLayout() → { pageH, top, bottom, gap } in layout px, plus `sheet` (element containing the editor),
+ *   `wordRules` (Word documents: keep with next, keep lines together, widow/orphan control)
  *   and optional `firstTop`: page 1's top (no header there, or a taller first-page header)
  * onLayout({ pages, spacers: [{ y, fill }], lastFill }) — called after spacers are placed
  */
@@ -138,6 +139,7 @@ function measure(view, L) {
 
   // units in document order: { pos, top, bottom } in unbroken content px
   const units = [];
+  let blk = 0;
   view.state.doc.forEach((node, offset) => {
     const el = view.nodeDOM(offset);
     if (!el || el.nodeType !== 1) return;
@@ -153,15 +155,19 @@ function measure(view, L) {
         const cells = [];
         row.forEach((cell, cOff) => cells.push([rowPos + 1 + cOff, rowPos + 1 + cOff + cell.nodeSize]));
         // first row breaks before the whole table (widget), later rows pad their cells
-        units.push(rOff === 0 ? { pos: offset, top: pTop, bottom: toContent(rr.bottom) } : { pos: rowPos, top: toContent(rr.top), bottom: toContent(rr.bottom), cells });
+        units.push(rOff === 0 ? { pos: offset, top: pTop, bottom: toContent(rr.bottom), blk, li: 0, tbl: true } : { pos: rowPos, top: toContent(rr.top), bottom: toContent(rr.bottom), cells, blk, li: 1, tbl: true });
       });
       if (units.length) units[units.length - 1].bottom = Math.max(units[units.length - 1].bottom, pBottom);
+      blk++;
       return;
     }
-    if (node.type.name !== 'paragraph') { units.push({ pos: offset, top: pTop, bottom: pBottom }); return; }
+    if (node.type.name !== 'paragraph') { units.push({ pos: offset, top: pTop, bottom: pBottom, blk: blk++, li: 0, n: 1 }); return; }
     const force = !!node.attrs.pageBreakBefore; // Word page break: this paragraph starts a page
+    const keep = { blk, kn: !!node.attrs.keepNext, kl: !!node.attrs.keepLines, wc: node.attrs.widowControl !== false };
+    blk++;
     const lines = lineRects(el);
-    if (lines.length <= 1) { units.push({ pos: offset, top: pTop, bottom: pBottom, force }); return; }
+    if (lines.length <= 1) { units.push({ pos: offset, top: pTop, bottom: pBottom, force, li: 0, n: 1, ...keep }); return; }
+    const first = units.length;
     // convert each line edge to content space first, then take midpoints —
     // a midpoint taken in screen space can fall inside a spacer
     const ct = lines.map((l) => ({ top: toContent(l.top), bottom: toContent(l.bottom) }));
@@ -179,8 +185,9 @@ function measure(view, L) {
         }
         pos = p;
       }
-      units.push({ pos, top, bottom, ...(i === 0 && force ? { force } : {}) });
+      units.push({ pos, top, bottom, ...(i === 0 && force ? { force } : {}), li: units.length - first, ...keep });
     }
+    for (let k = first; k < units.length; k++) units[k].n = units.length - first;
   });
 
   // The current page only advances when a break is placed: a page is never "entered"
@@ -190,15 +197,35 @@ function measure(view, L) {
   let shift = 0;
   let end = 0;
   let cur = 0;
-  for (const u of units) {
+  // Word moves a break earlier: keep lines together, no single first/last line of a
+  // paragraph alone on a page (widow/orphan control), a "keep with next" paragraph
+  // goes with the block after it — unless that would start at the page's top
+  const keepBack = (j) => {
+    let k = j;
+    const u = units[j];
+    if (!u.tbl && u.li > 0 && u.n >= 2) {
+      if (u.kl) k = j - u.li;
+      else if (u.wc && (u.li === 1 || u.li === u.n - 1)) {
+        k = j - 1;
+        if (units[k].li === 1) k -= 1; // moving the last two lines would orphan the first
+      }
+    }
+    while (k > 0 && units[k].li === 0 && units[k - 1].kn) k = k - 1 - units[k - 1].li;
+    return units[k].top + shift > pageStart(cur) + 0.5 ? k : j;
+  };
+  for (let j = 0; j < units.length; j++) {
+    const u = units[j];
     const t = u.top + shift, b = u.bottom + shift;
     if (t >= pageEnd(cur) + H) cur = pageOf(t); // after a unit taller than a page
     if ((u.force || b > pageEnd(cur) + 0.5) && t > pageStart(cur) + 0.5) {
-      const fill = Math.max(0, pageEnd(cur) - t);
-      if (!breaks.length || breaks[breaks.length - 1].pos !== u.pos) {
-        breaks.push(u.cells ? { pos: u.pos, fill, cells: u.cells } : { pos: u.pos, fill });
+      const k = L.wordRules && !u.force ? keepBack(j) : j;
+      const v = units[k];
+      const fill = Math.max(0, pageEnd(cur) - (v.top + shift));
+      if (!breaks.length || breaks[breaks.length - 1].pos !== v.pos) {
+        breaks.push(v.cells ? { pos: v.pos, fill, cells: v.cells } : { pos: v.pos, fill });
         shift += fill;
         cur++;
+        if (k < j) { j = k; end = Math.max(end, v.bottom + shift); continue; } // re-run the moved units on the new page
       }
     }
     end = Math.max(end, u.bottom + shift);

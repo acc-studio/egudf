@@ -59,12 +59,12 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
 
   // relationships go to the part being written: document.xml, or a header/footer
   let relSink = rels;
-  const rel = (type, target) => {
+  const rel = (type, target, external = false) => {
     const id = `rId${relSink.length + 10}`;
-    relSink.push({ id, type, target });
+    relSink.push({ id, type, target, external });
     return id;
   };
-  const relsXmlOf = (list, extra = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${extra}${list.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${r.target}"/>`).join('')}</Relationships>`;
+  const relsXmlOf = (list, extra = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${extra}${list.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${x(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`;
 
   function rPr(marks = [], change = null) {
     const o = [];
@@ -148,7 +148,9 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   function pPr(a, { inCell, inner = false } = {}) {
     let s = '';
     if (a.keepNext) s += '<w:keepNext/>';
+    if (a.keepLines) s += '<w:keepLines/>';
     if (a.pageBreakBefore) s += '<w:pageBreakBefore/>';
+    if (a.widowControl === false) s += '<w:widowControl w:val="0"/>';
     if (a.list) {
       // one multi-level Word list per list id, each level with the style its paragraphs use
       const key = `${a.list.kind}|${a.list.id}`;
@@ -189,10 +191,16 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       const ins = c.marks?.find((m) => m.type === 'insertion');
       const del = c.marks?.find((m) => m.type === 'deletion');
       const fc = c.marks?.find((m) => m.type === 'formatChange');
-      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun', 'formatChange'].includes(m.type));
-      if (del) body += `<w:del ${revAttrs(del)}>${textRuns(c.text, marks, true)}</w:del>`;
-      else if (ins) body += `<w:ins ${revAttrs(ins)}>${textRuns(c.text, marks)}</w:ins>`;
-      else body += textRuns(c.text, marks, false, fc);
+      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun', 'formatChange', 'link'].includes(m.type));
+      const link = c.marks?.find((m) => m.type === 'link')?.attrs?.href;
+      const wrap = (xml) => {
+        if (!link) return xml;
+        if (link.startsWith('#')) return `<w:hyperlink w:anchor="${x(link.slice(1))}">${xml}</w:hyperlink>`;
+        return `<w:hyperlink r:id="${rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink', link, true)}">${xml}</w:hyperlink>`;
+      };
+      if (del) body += `<w:del ${revAttrs(del)}>${wrap(textRuns(c.text, marks, true))}</w:del>`;
+      else if (ins) body += `<w:ins ${revAttrs(ins)}>${wrap(textRuns(c.text, marks))}</w:ins>`;
+      else body += wrap(textRuns(c.text, marks, false, fc));
     }
     return `<w:p>${pPr(a, opts)}${body}</w:p>`;
   }
@@ -340,9 +348,9 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     rel('http://schemas.microsoft.com/office/2011/relationships/commentsExtended', 'commentsExtended.xml');
   }
 
-  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
   const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${bodyXml}${sect}</w:body></w:document>`;
-  const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${r.target}"/>`).join('')}</Relationships>`;
+  const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${x(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`;
   const exts = [...new Set(media.map((m) => m.ext))];
   const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map((e) => `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('')}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${numbering ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}${commentsXml ? '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>' : ''}${Object.keys(parts).filter((k) => /^word\/(header|footer)\d+\.xml$/.test(k)).map((k) => `<Override PartName="/${k}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${k.includes('header') ? 'header' : 'footer'}+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>egUDF</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</dcterms:created></cp:coreProperties>`;
@@ -567,6 +575,8 @@ export function importDocx(bytes, opts = {}) {
           }
           case 'pageBreakBefore': o.pageBreakBefore = on(c); break;
           case 'keepNext': o.keepNext = on(c); break;
+          case 'keepLines': o.keepLines = on(c); break;
+          case 'widowControl': o.widowControl = on(c); break;
           case 'pBdr': { const b = Object.fromEntries(Object.entries(readBorders(c) || {}).filter(([k, v]) => v !== 'none' && ['top', 'bottom', 'left', 'right'].includes(k))); o.border = Object.keys(b).length ? b : null; break; }
           case 'shd': { const v = wa(c, 'fill'); o.shading = v && v !== 'auto' && !/^f{6}$/i.test(v) ? `#${v.toLowerCase()}` : null; break; }
           case 'contextualSpacing': o.contextual = on(c); break;
@@ -702,6 +712,8 @@ export function importDocx(bytes, opts = {}) {
     if (pp.lineRule) attrs.lineRule = pp.lineRule;
     if (pp.pageBreakBefore) attrs.pageBreakBefore = true;
     if (pp.keepNext) attrs.keepNext = true;
+    if (pp.keepLines) attrs.keepLines = true;
+    if (pp.widowControl === false) attrs.widowControl = false;
     if (pp.border) attrs.border = pp.border;
     if (pp.shading) attrs.shading = pp.shading;
     if (pp.tabs?.length) attrs.tabSet = pp.tabs.map((t) => `${t.pos}:${t.align}:${t.leader}`).join(',');
@@ -743,6 +755,16 @@ export function importDocx(bytes, opts = {}) {
             break;
           }
           case 'noBreakHyphen': pushText('-', marks); break;
+          case 'sym': { // a character of a symbol font (Wingdings ☐ ✓ …): the font's own code point
+            const code = parseInt(wa(c, 'char') || '', 16);
+            const font = wa(c, 'font');
+            if (!Number.isFinite(code)) break;
+            const ch = String.fromCharCode(code < 0x100 && /symbol|wingdings|webdings/i.test(font || '') ? 0xf000 + code : code);
+            const ts = marks.find((m) => m.type === 'textStyle');
+            const sm = font ? [...marks.filter((m) => m !== ts), { type: 'textStyle', attrs: { fontFamily: null, fontSize: null, color: null, letterSpacing: null, smallCaps: null, allCaps: null, dstrike: null, ...(ts?.attrs || {}), fontFamily: font } }] : marks;
+            pushText(ch, sm);
+            break;
+          }
           case 'fldChar': { const t = wa(c, 'fldCharType'); if (t === 'begin') fields.push('instr'); else if (t === 'separate') fields[fields.length - 1] = 'result'; else if (t === 'end') fields.pop(); break; }
           case 'drawing': case 'pict': {
             const blip = c.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0];
@@ -768,7 +790,14 @@ export function importDocx(bytes, opts = {}) {
           case 'r': run(c, extraMarks); break;
           case 'ins': walk(c, [...extraMarks, { type: 'insertion', attrs: { author: wa(c, 'author') || 'Word', at: wa(c, 'date') || '' } }]); break;
           case 'del': walk(c, [...extraMarks, { type: 'deletion', attrs: { author: wa(c, 'author') || 'Word', at: wa(c, 'date') || '' } }]); break;
-          case 'hyperlink': case 'smartTag': case 'customXml': case 'fldSimple': case 'sdtContent': walk(c, extraMarks); break;
+          case 'hyperlink': {
+            const rid = c.getAttributeNS(R, 'id') || c.getAttribute('r:id');
+            const anchor = wa(c, 'anchor');
+            const href = rid && rels[rid] ? rels[rid].target : anchor ? `#${anchor}` : null;
+            walk(c, href ? [...extraMarks, { type: 'link', attrs: { href, target: null, rel: 'noopener noreferrer', class: 'udf-link' } }] : extraMarks);
+            break;
+          }
+          case 'smartTag': case 'customXml': case 'fldSimple': case 'sdtContent': walk(c, extraMarks); break;
           case 'sdt': walk(kid(c, 'sdtContent'), extraMarks); break;
           case 'commentRangeStart': if (cById[`w${wa(c, 'id')}`]) activeComments.add(`w${wa(c, 'id')}`); break;
           case 'commentRangeEnd': activeComments.delete(`w${wa(c, 'id')}`); break;

@@ -31,7 +31,7 @@ export function baseExtensions() {
       code: false,
       horizontalRule: false,
       hardBreak: { keepMarks: true },
-      link: false,
+      link: { openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { class: 'udf-link', rel: 'noopener noreferrer', target: null } },
       trailingNode: false,
     }),
     UdfParagraph,

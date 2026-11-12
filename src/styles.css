@@ -216,6 +216,9 @@ body.focus-mode #ribbon, body.focus-mode #ribbon-head, body.focus-mode #tabbar {
 .sheet:not(.word-hf) .udf-doc p.udf-p[data-kind="number"] { position: relative; }
 .sheet:not(.word-hf) .udf-doc p.udf-p[data-hang] { text-indent: 0 !important; }
 .udf-doc .page-spacer { display: block; width: 0; text-indent: 0; user-select: none; }
+/* links keep the run's own colour/underline (Word's Hyperlink style arrives as marks); Ctrl+click opens */
+.udf-doc a.udf-link, .pg-header a.udf-link, .pg-footer a.udf-link { color: inherit; text-decoration: inherit; cursor: text; }
+body.ctrl-down .udf-doc a.udf-link { cursor: pointer; }
 .udf-doc .udf-field { background: rgba(59, 111, 245, 0.09); border-bottom: 1px dotted rgba(59,111,245,.6); }
 .udf-doc img.udf-img { vertical-align: bottom; max-width: 100%; }
 .udf-doc img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
