@@ -833,3 +833,19 @@ tables; headings with spacing. Word documents keep Word's rules.
   documents.
 - **Testing:** new smoke step `rulertabs` adds a center stop at 8 cm, drags it
   to 10 cm, then drags it off.
+
+## 0.31.0: Word heading styles (iteration 30)
+
+- **In Word documents, the style gallery offers Word's styles:** Normal,
+  Başlık 1, Başlık 2, Başlık 3 and Alıntı.
+  - The Başlık styles are real Word headings. They use the document's own
+    heading style when it has one (in any language, e.g. "Balk1" in Turkish
+    Word), otherwise Word's built-in definition.
+  - Word's navigation pane, table of contents and outline see them, and so do
+    egUDF's navigation pane and İçindekiler.
+  - They keep the heading with the next paragraph, as Word does.
+- .udf documents keep egUDF's UYAP styles (Normal, Gövde, Mahkeme, Başlık…).
+  The gallery switches with the document you're in.
+- **Testing:** new smoke step `wordstyles` covers the gallery, the style id
+  and outline level, the navigation pane, the saved Word style, and the .udf
+  gallery coming back.

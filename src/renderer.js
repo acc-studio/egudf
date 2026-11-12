@@ -11,7 +11,7 @@ import { PT_TO_PX, A4, num, NUMBER_TYPES, BULLET_TYPES, base64FromBytes, uyapLis
 import { icon } from './icons.js';
 import { $, $$, h, esc, modal, menu, colorMenu, gridMenu, toast, confirmBox, fmtDate, promptBox } from './ui.js';
 import { DEFAULT_AUTOCORRECT } from './editor/autocorrect.js';
-import { createRibbon, PARA_STYLES } from './ribbon.js';
+import { createRibbon, PARA_STYLES, WORD_STYLES } from './ribbon.js';
 import { signDialog, signatureInfo, uyapSendFlow, driverSettings } from './signflow.js';
 import { commentsAt } from './review/comments.js';
 import { readReview, reviewEntries } from './review/store.js';
@@ -230,7 +230,9 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
 }
 
 function activate(tab) {
+  const kind = app.active?.format;
   app.active = tab;
+  if (ribbon && kind !== tab?.format && ribbon.current() === 'home') ribbon.show('home'); // Word vs UYAP style gallery
   for (const t of app.tabs) t.host.classList.toggle('active', t === tab);
   $('#welcome').classList.toggle('hidden', !!tab);
   document.body.classList.toggle('no-doc', !tab);
@@ -1132,11 +1134,31 @@ async function insertImage(ed) {
 
 // ================================================================== styles
 
+/** Word's heading style for level n in this document: its own (any language), else Word's built-in definition. */
+function wordHeadingStyle(tab, n) {
+  tab.meta.docxStyles ||= {};
+  for (const [id, v] of Object.entries(tab.meta.docxStyles)) if (new RegExp(`<w:name w:val="heading ${n}"/>`, 'i').test(v.xml)) return id;
+  const id = `Heading${n}`;
+  const sz = { 1: 32, 2: 26, 3: 24 }[n];
+  tab.meta.docxStyles[id] = {
+    xml: `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="${n === 1 ? 240 : 120}" w:after="60"/><w:outlineLvl w:val="${n - 1}"/></w:pPr><w:rPr><w:b/><w:bCs/>${n === 3 ? '<w:i/><w:iCs/>' : ''}<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`,
+    r: { bold: true, italic: n === 3 || undefined, size: sz / 2 },
+    outline: n - 1,
+  };
+  return id;
+}
+
 function applyParaStyle(ed, id) {
-  const st = PARA_STYLES.find((s) => s.id === id) || (app.userStyles || []).find((s) => s.id === id);
+  const st = PARA_STYLES.find((s) => s.id === id) || WORD_STYLES.find((s) => s.id === id) || (app.userStyles || []).find((s) => s.id === id);
   if (!st) return;
   const { state } = ed;
   const tr = state.tr;
+  const tab = app.active;
+  if (st.word && tab) {
+    // a Word style: its style id and outline level go on the paragraphs too
+    const level = st.word.level;
+    st.para = { ...st.para, styleId: level ? wordHeadingStyle(tab, level) : null, outline: level ? level - 1 : null };
+  }
   const { from, to } = state.selection;
   const schema = state.schema;
   state.doc.nodesBetween(from, to, (node, pos) => {
@@ -1277,7 +1299,7 @@ async function runCmd(name, arg, el) {
       chain().setParagraphAttrs({ [arg.field]: pt }).run();
       return;
     }
-    case 'style': applyParaStyle(ed, arg); return;
+    case 'style': applyParaStyle(ed, arg); refreshNav(); return;
     case 'marks': document.body.classList.toggle('show-marks'); app.active?.editor.commands.repaginate(); scheduleUI(); return;
 
     case 'formatPainter': formatPainter(app, { sticky: arg === 'sticky' }); return;
@@ -2135,7 +2157,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'rulertabs', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'wordstyles', 'rulertabs', 'udfpitch', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2278,6 +2300,30 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'wordstyles': { // Word documents: Başlık 1–3 are real Word headings
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        const pth = `${out}${sep}wordstyles.docx`;
+        await native.writeFile(pth, exportDocx({ type: 'doc', content: [P('Giriş'), P('Metin paragrafı.')] }, smokeWordMeta()));
+        const t = await openPath(pth);
+        await wait(300);
+        ribbon.show('home');
+        const gallery = !!document.querySelector('#ribbon .gi[data-arg="w-h1"]') && !document.querySelector('#ribbon .gi[data-arg="mahkeme"]');
+        t.editor.commands.setTextSelection(2);
+        runCmd('style', 'w-h1');
+        await wait(150);
+        const a = t.editor.state.doc.firstChild.attrs;
+        const marks = JSON.stringify(t.editor.state.doc.firstChild.firstChild.marks.map((m) => m.toJSON()));
+        const heads = docHeadings(t).map((x) => x.label);
+        const xml = new TextDecoder().decode(unzipSync(exportDocx(t.editor.getJSON(), t.meta))['word/styles.xml']);
+        const ok = gallery && a.styleId === 'Heading1' && a.outline === 0 && a.keepNext && /"bold"/.test(marks) && /16pt/.test(marks) && heads[0] === 'Giriş' && /<w:name w:val="heading 1"\/>/.test(xml);
+        // a .udf shows the UYAP gallery again
+        const u = newDocument('blank');
+        await wait(150);
+        const udfGallery = !!document.querySelector('#ribbon .gi[data-arg="mahkeme"]');
+        u.dirty = false;
+        await closeTab(u);
+        return { ok: ok && udfGallery, gallery, udfGallery, styleId: a.styleId, outline: a.outline, heads };
       }
       case 'rulertabs': { // Word-style tab stops on the ruler: add (typed), move, drag off to remove
         const t = newDocument('blank');

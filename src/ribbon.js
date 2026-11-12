@@ -16,6 +16,19 @@ export const PARA_STYLES = [
   { id: 'imza', name: 'İmza', prev: 'Av. Ad', css: 'text-align:right', para: { align: 'right', firstLineIndent: 0 }, marks: {} },
 ];
 
+/**
+ * Word documents: Word's own styles. Başlık 1–3 are real heading styles (Word's
+ * navigation pane, table of contents and outline see them); "word" says which
+ * Word style id / outline level they set (see applyParaStyle).
+ */
+export const WORD_STYLES = [
+  { id: 'w-normal', name: 'Normal', prev: 'AaBbÇç', word: { level: null }, para: { firstLineIndent: 0, leftIndent: 0, spaceAbove: 0, keepNext: false }, marks: { bold: false, size: null } },
+  { id: 'w-h1', name: 'Başlık 1', prev: 'Başlık 1', css: 'font-weight:700;font-size:15px', word: { level: 1 }, para: { firstLineIndent: 0, spaceAbove: 12, spaceBelow: 3, keepNext: true }, marks: { bold: true, size: 16 } },
+  { id: 'w-h2', name: 'Başlık 2', prev: 'Başlık 2', css: 'font-weight:700;font-size:13px', word: { level: 2 }, para: { firstLineIndent: 0, spaceAbove: 6, spaceBelow: 3, keepNext: true }, marks: { bold: true, size: 13 } },
+  { id: 'w-h3', name: 'Başlık 3', prev: 'Başlık 3', css: 'font-weight:700;font-style:italic', word: { level: 3 }, para: { firstLineIndent: 0, spaceAbove: 6, spaceBelow: 2, keepNext: true }, marks: { bold: true, italic: true, size: null } },
+  { id: 'w-quote', name: 'Alıntı', prev: '“Alıntı”', css: 'font-style:italic', word: { level: null }, para: { leftIndent: 35.4, rightIndent: 35.4, firstLineIndent: 0 }, marks: { italic: true } },
+];
+
 const big = (cmd, ic, label, { cls = '', arg = '', title = '', id = '' } = {}) =>
   `<button class="rb big ${cls}" data-cmd="${cmd}" data-arg="${esc(arg)}" title="${esc(title || label)}" ${id ? `id="${id}"` : ''}>${icon(ic)}<span>${label}</span></button>`;
 const btn = (cmd, ic, title, { arg = '', label = '', cls = '' } = {}) =>
@@ -122,7 +135,7 @@ const TABS = {
 const TAB_LABELS = [['file', 'Dosya'], ['home', 'Giriş'], ['insert', 'Ekle'], ['layout', 'Düzen'], ['review', 'Gözden Geçir'], ['sign', 'İmza'], ['uyap', 'UYAP'], ['view', 'Görünüm']];
 
 let ribbonApp = null;
-const allStyles = () => [...PARA_STYLES, ...(ribbonApp?.userStyles || []).map((s) => ({ ...s, user: true }))];
+const allStyles = () => [...(ribbonApp?.active?.format === 'docx' ? WORD_STYLES : PARA_STYLES), ...(ribbonApp?.userStyles || []).map((s) => ({ ...s, user: true }))];
 
 export function createRibbon(app) {
   ribbonApp = app;
