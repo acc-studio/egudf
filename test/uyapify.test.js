@@ -81,3 +81,13 @@ test('uyapifyDoc maps header/footer and the base font', () => {
   assert.equal(r.meta.base.family, 'Calibri');
   assert.equal(r.meta.header.content[0].attrs.border, null);
 });
+
+test('footnotes: superscript numbers in the text, the notes at the end (UYAP has no footnotes)', () => {
+  const fn = (text) => ({ type: 'footnote', attrs: { id: null, content: [P({}, [{ type: 'text', text }])] } });
+  const doc = { type: 'doc', content: [P({}, [{ type: 'text', text: 'Madde' }, fn('TBK m. 1'), { type: 'text', text: ' ve' }, fn('HMK m. 2')])] };
+  const xml = serializeUdfXml(doc, newDocMeta());
+  const back = parseUdfXml(xml).doc.content;
+  const text = back.map((p) => (p.content || []).map((c) => c.text).join(''));
+  assert.deepEqual(text, ['Madde1 ve2', 'Dipnotlar', '1 TBK m. 1', '2 HMK m. 2']);
+  assert.ok(back[0].content.find((c) => c.text === '1').marks.some((m) => m.type === 'superscript'));
+});

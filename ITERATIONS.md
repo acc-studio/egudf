@@ -549,3 +549,29 @@ These come first among the Word features still missing: counted across the
     separated from its paragraph and no line is left alone. The same document
     under .udf rules does split, which proves the rules are what holds it
     together.
+
+## 0.17.0: Footnotes (iteration 16)
+
+- **Footnotes in Word documents, as in Word:**
+  - The reference number sits in the text and numbers itself in document
+    order.
+  - The footnote text appears at the bottom of the page that holds the
+    reference, under a short separator line. Pagination reserves that room,
+    so the body text stops above the notes and never runs into them.
+  - Ekle → **Dipnot ekle** (Ctrl+Alt+F, Word's shortcut) inserts one.
+    Double-click a footnote number to edit or delete its text.
+  - Read from and written to Word's own footnotes (`footnotes.xml`, with
+    Word's separators and styles). Checked in Word: same notes, formatting
+    kept.
+- **In .udf:** UYAP has no footnotes. Each becomes a superscript number in the
+  text, and the notes follow at the end of the document under "Dipnotlar".
+  This applies on Save As .udf and is also enforced when saving, so no
+  footnote text is ever lost in a .udf.
+- **Page break** (Ekle → Sayfa sonu, Ctrl+Enter) in Word documents. For a
+  .udf, egUDF explains that the format can't hold one.
+- **Testing:**
+  - New smoke step `footnotes`: 10 notes over 3 pages. Each note is on the
+    page of its reference, between the last text line and the bottom margin.
+    Inserting one through the dialog works, and all notes survive a Word
+    round trip.
+  - A unit test covers the .udf fallback.

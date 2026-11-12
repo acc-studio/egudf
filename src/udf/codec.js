@@ -22,6 +22,7 @@
 // carried through so UYAP form templates keep working.
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { ALIGN, IMAGE_CHAR, PT_TO_PX, javaToHex, hexToJava, jfloat, num, imageMime, uyapLevelType, uyapListType } from './common.js';
+import { flattenFootnotes } from './uyapify.js';
 
 const CHAR_KEYS = new Set(['family', 'size', 'bold', 'italic', 'underline', 'strikethrough', 'foreground', 'background', 'subscript', 'superscript']);
 const PARA_NUM = [['LeftIndent', 'leftIndent'], ['RightIndent', 'rightIndent'], ['FirstLineIndent', 'firstLineIndent'], ['Hanging', 'hanging'], ['SpaceAbove', 'spaceAbove'], ['SpaceBelow', 'spaceBelow'], ['LineSpacing', 'lineSpacing']];
@@ -336,6 +337,8 @@ export function splitBreaks(n) {
 }
 
 export function serializeUdfXml(doc, meta) {
+  // no footnotes in UDF: numbered notes at the end (never drop them silently)
+  if (JSON.stringify(doc.content || []).includes('"type":"footnote"')) doc = { ...doc, content: flattenFootnotes(doc.content) };
   const base = meta.base || { family: 'Times New Roman', size: 12 };
   const w = { text: '', base };
   const out = [];

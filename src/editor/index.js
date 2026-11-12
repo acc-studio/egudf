@@ -15,6 +15,7 @@ import { AutoCorrect } from './autocorrect.js';
 import { Spell } from './spell.js';
 import { CollabPeers } from '../collab/peers.js';
 import { CommentMark } from '../review/comments.js';
+import { Footnote, FootnoteNumbers } from './footnote.js';
 import { InsertionMark, DeletionMark, FormatChangeMark, TrackChanges } from '../review/changes.js';
 
 export function baseExtensions() {
@@ -52,6 +53,7 @@ export function baseExtensions() {
     UdfCommands,
     ListLabels,
     CommentMark,
+    Footnote,
     InsertionMark,
     DeletionMark,
     FormatChangeMark,
@@ -78,6 +80,7 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       Spell,
       CollabPeers,
       TabStops.configure({ defaultTab: defaultTab || (() => 36) }),
+      FootnoteNumbers,
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],
     editorProps: {

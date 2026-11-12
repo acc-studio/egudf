@@ -40,6 +40,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   const media = []; // { name, bytes, ext }
   const rels = []; // { id, type, target }
   const lists = new Map(); // key → { numId, kind, type }
+  const footnotes = []; // footnote texts, in reference order (w:id = index + 1)
   const comments = review?.comments || [];
   // Word threads: each reply is its own w:comment over the same range, linked to
   // its parent through commentsExtended.xml (w15:paraIdParent); resolved = w15:done
@@ -187,6 +188,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       body += commentBoundary(c.marks);
       if (c.type === 'image') { body += imageRun(c); continue; }
       if (c.type === 'hardBreak') { body += '<w:r><w:br/></w:r>'; continue; }
+      if (c.type === 'footnote') { footnotes.push(c.attrs?.content || []); body += `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${footnotes.length}"/></w:r>`; continue; }
       if (c.type !== 'text') continue;
       const ins = c.marks?.find((m) => m.type === 'insertion');
       const del = c.marks?.find((m) => m.type === 'deletion');
@@ -314,6 +316,24 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   }
   const sect = `<w:sectPr>${headerRef}${footerRef}<w:pgSz w:w="${pageW}" w:h="${pageH}"${land ? ' w:orient="landscape"' : ''}/><w:pgMar w:top="${margin('topMargin', 56.7)}" w:right="${margin('rightMargin', 70.875)}" w:bottom="${margin('bottomMargin', 56.7)}" w:left="${margin('leftMargin', 70.875)}" w:header="${margin('headerFOffset', 20)}" w:footer="${margin('footerFOffset', 20)}" w:gutter="0"/>${titlePg ? '<w:titlePg/>' : ''}</w:sectPr>`;
 
+  // footnotes: separators -1/0, then the notes; the first paragraph starts with the number
+  let footnotesXml = '';
+  if (footnotes.length) {
+    const own = [];
+    relSink = own;
+    let notes = '';
+    for (let i = 0; i < footnotes.length; i++) {
+      // a note may itself hold footnotes (Word doesn't): those become plain text here
+      let inner = blocks(footnotes[i].length ? footnotes[i] : [{ type: 'paragraph' }], contentTw);
+      inner = inner.replace('<w:pPr>', '<w:pPr><w:pStyle w:val="FootnoteText"/>').replace('</w:pPr>', '</w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>');
+      notes += `<w:footnote w:id="${i + 1}">${inner}</w:footnote>`;
+    }
+    relSink = rels;
+    if (own.length) parts['word/_rels/footnotes.xml.rels'] = relsXmlOf(own);
+    footnotesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes ${NS}><w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>${notes}</w:footnotes>`;
+    rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes', 'footnotes.xml');
+  }
+
   // numbering
   let numbering = '';
   if (lists.size) {
@@ -348,14 +368,14 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     rel('http://schemas.microsoft.com/office/2011/relationships/commentsExtended', 'commentsExtended.xml');
   }
 
-  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
   const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${bodyXml}${sect}</w:body></w:document>`;
   const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${x(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`;
   const exts = [...new Set(media.map((m) => m.ext))];
-  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map((e) => `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('')}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${numbering ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}${commentsXml ? '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>' : ''}${Object.keys(parts).filter((k) => /^word\/(header|footer)\d+\.xml$/.test(k)).map((k) => `<Override PartName="/${k}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${k.includes('header') ? 'header' : 'footer'}+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map((e) => `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('')}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${footnotesXml ? '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>' : ''}${numbering ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}${commentsXml ? '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>' : ''}${Object.keys(parts).filter((k) => /^word\/(header|footer)\d+\.xml$/.test(k)).map((k) => `<Override PartName="/${k}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${k.includes('header') ? 'header' : 'footer'}+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>egUDF</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</dcterms:created></cp:coreProperties>`;
 
-  const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}><w:defaultTabStop w:val="${tw(meta.defaultTab || 36)}"/><w:characterSpacingControl w:val="doNotCompress"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
+  const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}><w:defaultTabStop w:val="${tw(meta.defaultTab || 36)}"/>${footnotesXml ? '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>' : ''}<w:characterSpacingControl w:val="doNotCompress"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
   const files = {
     'word/settings.xml': strToU8(settings),
     '[Content_Types].xml': strToU8(ct),
@@ -366,6 +386,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     'word/_rels/document.xml.rels': strToU8(relsXml),
   };
   if (numbering) files['word/numbering.xml'] = strToU8(numbering);
+  if (footnotesXml) files['word/footnotes.xml'] = strToU8(footnotesXml);
   if (commentsXml) { files['word/comments.xml'] = strToU8(commentsXml); files['word/commentsExtended.xml'] = strToU8(commentsExXml); }
   for (const [k, v] of Object.entries(parts)) files[k] = strToU8(v);
   for (const m of media) files[`word/media/${m.name}`] = m.bytes;
@@ -643,6 +664,20 @@ export function importDocx(bytes, opts = {}) {
     return s;
   }
 
+  // ---- footnotes (word/footnotes.xml): parsed on first reference
+  const fnDom = xml('word/footnotes.xml');
+  const fnEls = {};
+  for (const f of fnDom ? kids(fnDom.documentElement, 'footnote') : []) if (!wa(f, 'type') || wa(f, 'type') === 'normal') fnEls[wa(f, 'id')] = f;
+  const footnoteBlocks = (id) => {
+    const el = fnEls[id];
+    if (!el) return [{ type: 'paragraph', attrs: defaultParaAttrs() }];
+    const blocks = parseBlocks(el, relsOf('word/footnotes.xml'));
+    // Word starts the text after the number with a space
+    const first = blocks[0]?.content?.find((n) => n.type === 'text');
+    if (first) { first.text = first.text.replace(/^\s+/, ''); if (!first.text) blocks[0].content.splice(blocks[0].content.indexOf(first), 1); }
+    return blocks.length ? blocks : [{ type: 'paragraph', attrs: defaultParaAttrs() }];
+  };
+
   // ---- blocks
   const docRels = relsOf('word/document.xml');
   const activeComments = new Set();
@@ -755,6 +790,12 @@ export function importDocx(bytes, opts = {}) {
             break;
           }
           case 'noBreakHyphen': pushText('-', marks); break;
+          case 'footnoteReference': {
+            if (inInstr()) break;
+            const id = wa(c, 'id');
+            cur().push({ type: 'footnote', attrs: { id, content: footnoteBlocks(id) } });
+            break;
+          }
           case 'sym': { // a character of a symbol font (Wingdings ☐ ✓ …): the font's own code point
             const code = parseInt(wa(c, 'char') || '', 16);
             const font = wa(c, 'font');
@@ -965,7 +1006,6 @@ function unsupported(files) {
   const count = (re) => (doc.match(re) || []).length;
   const out = [];
   const add = (n, label) => { if (n) out.push(n > 1 ? `${label} (${n})` : label); };
-  add(count(/<w:footnoteReference\b/g), 'dipnotlar');
   add(count(/<w:endnoteReference\b/g), 'son notlar');
   add(count(/<w:txbxContent\b/g), 'metin kutuları');
   add(count(/<m:oMath\b/g), 'denklemler');

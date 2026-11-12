@@ -49,6 +49,7 @@ const TABS = {
   insert: () => [
     group('Tablolar', big('tableMenu', 'table', 'Tablo') + col(btn('textToTable', 'textTable', 'Seçili paragrafları tabloya dönüştür (sekme veya ; ile ayrılmış)', { label: 'Metinden tablo' }))),
     group('Çizimler', big('image', 'image', 'Resim')),
+    group('Başvurular', big('insertFootnote', 'footnote', 'Dipnot<br>ekle', { title: 'Dipnot ekle (Ctrl+Alt+F) — Word belgelerinde sayfa altında' }) + big('pageBreak', 'pageBreak', 'Sayfa<br>sonu', { title: 'Sayfa sonu (Ctrl+Enter) — Word belgelerinde' })),
     group('Metin', big('dateMenu', 'date', 'Tarih') + big('symbolMenu', 'symbol', 'Simge') + big('blockMenu', 'block', 'Hazır<br>bloklar')),
     group('Belge', big('newFromTemplate', 'template', 'Şablondan<br>yeni') + big('templateSave', 'save', 'Şablon olarak<br>kaydet')),
   ],

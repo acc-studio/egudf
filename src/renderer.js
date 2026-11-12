@@ -26,6 +26,7 @@ import { exportDocx, importDocx } from './interop/docx.js';
 import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
 import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
 import { layoutTabsDom } from './editor/tabs.js';
+import { footnotesOf } from './editor/footnote.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -77,6 +78,7 @@ function applyGeometry(tab) {
   s.fontFamily = `'${tab.meta.base.family}', 'Liberation Serif', 'Times New Roman', serif`;
   s.fontSize = `${tab.meta.base.size}pt`;
   tab.sheet.classList.toggle('word-hf', tab.format === 'docx');
+  tab._fnH = null;
   // Word's "single" line height is the font's own (ascent + descent + gap); UDF keeps 1.15
   s.setProperty('--lhf', tab.format === 'docx' ? String(lineFactor(tab.meta.base.family)) : '1.15');
   fitHeaderFooter(tab, g);
@@ -132,6 +134,29 @@ function lineFactor(family) {
   return T[f] || 1.15;
 }
 
+// ---- footnotes at the page bottom (Word documents)
+const FN_SEP = 10; // px: separator line + gap above the first footnote
+
+/** HTML of one footnote at the page bottom: its number, then its text. */
+function footnoteItemHtml(n, content) {
+  const html = staticHTML(content?.length ? content : [{ type: 'paragraph' }]) || '<p class="udf-p"></p>';
+  return `<div class="pg-fn-item">${html.replace(/(<p\b[^>]*>)/, `$1<span class="pg-fn-n">${n}</span>`)}</div>`;
+}
+
+/** px a footnote takes at the page bottom (measured once per text). */
+function footnoteHeight(tab, node) {
+  tab._fnH ??= new Map();
+  const key = JSON.stringify(node.attrs.content || []);
+  if (tab._fnH.has(key)) return tab._fnH.get(key);
+  let m = tab.sheet.querySelector(':scope > .pg-measure');
+  if (!m) { m = document.createElement('div'); m.className = 'pg-measure'; tab.sheet.append(m); }
+  m.innerHTML = `<div class="pg-fns" style="position:static;width:${tab.geom.pageW - tab.geom.left - tab.geom.right}px">${footnoteItemHtml(99, node.attrs.content)}</div>`;
+  const h = m.firstElementChild.offsetHeight;
+  m.innerHTML = '';
+  if (h) tab._fnH.set(key, h);
+  return h || 16;
+}
+
 function applyZoom(tab) {
   if (!tab?.sheet) return;
   tab.ruler?.invalidate();
@@ -149,7 +174,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
   tab.editor = createEditor({
     element: $('.mount', host),
     content: doc,
-    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx' }),
+    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx', fnHeight: (node) => footnoteHeight(tab, node), fnSep: FN_SEP }),
     onLayout: (L) => drawOverlay(tab, L),
     defaultTab: () => tab.meta.defaultTab || 36,
     onUpdate: (_e, tr) => onDocChange(tab, tr),
@@ -162,6 +187,14 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     },
   });
   setupSpell(app, tab);
+  tab.editor.view.dom.addEventListener('dblclick', (e) => {
+    const sup = e.target.closest?.('sup.udf-fnref');
+    if (!sup) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = tab.editor.view.posAtDOM(sup, 0);
+    footnoteDialog(tab, pos);
+  });
   // Ctrl+click on a link opens it (Word's behaviour); a plain click just places the caret
   tab.editor.view.dom.addEventListener('click', (e) => {
     const a = e.target.closest?.('a.udf-link[href]');
@@ -268,8 +301,19 @@ function drawOverlay(tab, L) {
       html += `<div class="pg-num ${pn.vert}" style="top:${y}px;left:${g.left}px;right:${g.right}px;text-align:${pn.pos};${font}">${esc(pageLabel(pn, i, n))}</div>`;
     }
   }
+  // footnotes: at the bottom of the page holding their reference (room reserved by pagination)
+  const fns = footnotesOf(tab.editor.state.doc);
+  if (fns.length) {
+    const perPage = new Map();
+    for (const f of fns) { const p = pageOfPos(tab.editor.view, f.pos); if (!perPage.has(p)) perPage.set(p, []); perPage.get(p).push(f); }
+    for (const [p, list] of perPage) {
+      const i = Math.min(n, p) - 1;
+      const hgt = list.reduce((s, f) => s + footnoteHeight(tab, f.node), 0) + FN_SEP;
+      html += `<div class="pg-fns" style="top:${bottoms[i] - g.bottom - hgt}px;left:${g.left}px;width:${g.pageW - g.left - g.right}px"><div class="pg-fn-sep"></div>${list.map((f) => footnoteItemHtml(f.n, f.node.attrs.content)).join('')}</div>`;
+    }
+  }
   tab.overlay.innerHTML = html;
-  if (/	/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36);
+  if (/\t/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36);
   tab.pageBoxes = { tops, bottoms };
   tab.pages = n;
   if (tab === app.active) scheduleUI();
@@ -475,6 +519,57 @@ function uyapNormalize(tab) {
   return true;
 }
 app.uyapNormalize = uyapNormalize;
+
+/** Edit the text of the footnote at pos (a small editor in a dialog, as Word's footnote pane). */
+function footnoteDialog(tab, pos, { isNew = false } = {}) {
+  const node = tab.editor.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== 'footnote') return;
+  const n = footnotesOf(tab.editor.state.doc).find((f) => f.pos === pos)?.n || 1;
+  const body = h(`<div><div class="fn-edit sheet word-hf" style="width:100%;min-height:90px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:#fff;color:#000;font-family:'${esc(tab.meta.base.family)}';font-size:10pt"></div><p class="note">Dipnot ${n}. Word belgelerinde sayfanın altında görünür; .udf olarak kaydedilince belgenin sonunda numaralı not olur (UYAP'ta dipnot yok).</p></div>`);
+  const mount = $('.fn-edit', body);
+  const mini = createEditor({ element: mount, content: { type: 'doc', content: node.attrs.content?.length ? node.attrs.content : [{ type: 'paragraph', attrs: defaultParaAttrs() }] }, paginate: false });
+  mini.view.dom.style.padding = '0';
+  mini.view.dom.style.minHeight = '80px';
+  setTimeout(() => mini.commands.focus('end'), 50);
+  let finished = false;
+  const done = (keep) => {
+    if (finished) return;
+    finished = true;
+    const content = mini.getJSON().content;
+    mini.destroy();
+    const cur = tab.editor.state.doc.nodeAt(pos);
+    if (!cur || cur.type.name !== 'footnote') return;
+    const empty = !content.some((b) => (b.content || []).length);
+    if (!keep && isNew) { tab.editor.view.dispatch(tab.editor.state.tr.delete(pos, pos + 1)); return; }
+    if (keep && isNew && empty) { tab.editor.view.dispatch(tab.editor.state.tr.delete(pos, pos + 1)); return; }
+    if (keep) tab.editor.view.dispatch(tab.editor.state.tr.setNodeMarkup(pos, null, { ...cur.attrs, content }));
+  };
+  modal({ title: `Dipnot ${n}`, icon: 'footnote', body, width: 560, onClose: () => done(false), actions: [
+    ...(isNew ? [] : [{ label: 'Dipnotu sil', kind: 'danger', left: true, onClick: () => { finished = true; mini.destroy(); tab.editor.view.dispatch(tab.editor.state.tr.delete(pos, pos + 1)); } }]),
+    { label: 'İptal', onClick: () => done(false) },
+    { label: 'Tamam', kind: 'primary', onClick: () => done(true) },
+  ] });
+  app.footnoteMini = mini;
+}
+
+function insertFootnote(tab) {
+  if (!tab) return;
+  if (tab.format !== 'docx') { toast('UYAP belgelerinde dipnot yok. Not, .udf kaydedilirken metnin sonuna numaralı olarak eklenir.', { type: 'warn', ms: 5000 }); }
+  const ed = tab.editor;
+  const pos = ed.state.selection.to;
+  ed.view.dispatch(ed.state.tr.insert(pos, ed.schema.nodes.footnote.create({ id: null, content: [{ type: 'paragraph', attrs: defaultParaAttrs() }] })));
+  footnoteDialog(tab, pos, { isNew: true });
+}
+
+/** Word page break: the text after the cursor starts on a new page (Word documents only). */
+function insertPageBreak(tab) {
+  if (!tab) return;
+  if (tab.format !== 'docx') { toast('UYAP belgelerinde sayfa sonu yok: .udf biçimi sayfa sonunu saklayamaz.', { type: 'warn', ms: 5000 }); return; }
+  const ed = tab.editor;
+  ed.chain().focus().splitBlock().run();
+  const { $from } = ed.state.selection;
+  ed.view.dispatch(ed.state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, pageBreakBefore: true }));
+}
 
 /** Writes the tab as .docx to path. */
 async function saveDocx(tab, path, { quiet = false } = {}) {
@@ -1060,6 +1155,8 @@ async function runCmd(name, arg, el) {
       return;
     }
     case 'save': if (tab) await save(tab); return;
+    case 'insertFootnote': insertFootnote(tab); return;
+    case 'pageBreak': insertPageBreak(tab); return;
     case 'saveAs': if (tab) await save(tab, { as: true }); return;
     case 'close': if (tab) await closeTab(tab); return;
     case 'exportPdf': {
@@ -1828,6 +1925,8 @@ function wireChrome() {
     }
     if (k === ' ' && !e.shiftKey && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('clearFormat'); return; }
     if (e.altKey && k === 'm' && app.ed()) { e.preventDefault(); runCmd('commentNew'); return; }
+    if (e.altKey && k === 'f' && app.ed()) { e.preventDefault(); runCmd('insertFootnote'); return; }
+    if (!e.altKey && !e.shiftKey && e.key === 'Enter' && app.tab()?.format === 'docx' && app.ed()?.view.hasFocus()) { e.preventDefault(); runCmd('pageBreak'); return; }
     // Word paragraph/character shortcuts
     if (app.ed() && !e.altKey) {
       const wordKeys = { '1': ['lineSpacing', 0], '2': ['lineSpacing', 1], '5': ['lineSpacing', 0.5] };
@@ -1916,7 +2015,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2059,6 +2158,49 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'footnotes': { // Word footnotes at the bottom of their page, room reserved; insert + edit
+        const P = (c) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), spaceBelow: 6 }, content: c });
+        const T = (text) => ({ type: 'text', text });
+        const FN = (text) => ({ type: 'footnote', attrs: { id: null, content: [{ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text, marks: [{ type: 'textStyle', attrs: { fontSize: '10pt' } }] }] }] } });
+        const long = 'Taraflar arasındaki uyuşmazlık, sözleşmenin yorumu ve ifası bakımından değerlendirilmelidir. ';
+        const content = [];
+        for (let i = 0; i < 40; i++) content.push(P([T(long.repeat(1 + (i % 3))), ...(i % 4 === 1 ? [FN(`Yargıtay ${i}. HD, E. 2024/${i}, K. 2025/${i}. ${'Ayrıntılı açıklama. '.repeat(1 + (i % 3))}`)] : []), T(' Son.')]));
+        const p = `${out}${sep}footnotes.docx`;
+        await native.writeFile(p, exportDocx({ type: 'doc', content }, smokeWordMeta()));
+        const t = await openPath(p);
+        await wait(1200);
+        const z = app.zoom, sheet = t.sheet.getBoundingClientRect();
+        const y = (r) => (r - sheet.top) / z;
+        const blocks = [...t.overlay.querySelectorAll('.pg-fns')].map((el) => { const r = el.getBoundingClientRect(); return { top: y(r.top), bottom: y(r.bottom), n: el.querySelectorAll('.pg-fn-item').length }; });
+        const fnCount = blocks.reduce((s, b) => s + b.n, 0);
+        // every block sits inside its page, above the bottom margin and below that page's last text line
+        const lines = [...t.editor.view.dom.querySelectorAll(':scope > p')].flatMap((pEl) => [...pEl.getClientRects()].map((r) => y(r.bottom)));
+        const bad = blocks.filter((b) => {
+          const page = t.pageBoxes.bottoms.findIndex((bt) => b.bottom <= bt + 1);
+          if (page < 0) return true;
+          const top = t.pageBoxes.tops[page], pageBottom = t.pageBoxes.bottoms[page];
+          const lastLine = Math.max(...lines.filter((l) => l > top && l < pageBottom));
+          return b.bottom > pageBottom - t.geom.bottom + 1 || b.top < lastLine - 1;
+        });
+        // the reference and its note are on the same page
+        const sameP = footnotesOf(t.editor.state.doc).every((f) => {
+          const pg = pageOfPos(t.editor.view, f.pos);
+          const blk = blocks.filter((b) => t.pageBoxes.bottoms.findIndex((bt) => b.bottom <= bt + 1) === pg - 1);
+          return blk.length === 1;
+        });
+        // insert one through the command and its dialog
+        t.editor.commands.setTextSelection(5);
+        runCmd('insertFootnote');
+        await wait(300);
+        app.footnoteMini.commands.insertContent('Yeni dipnot');
+        $$('#modal-root .modal-foot button').find((b) => b.textContent === 'Tamam').click();
+        await wait(500);
+        const all = footnotesOf(t.editor.state.doc);
+        const inserted = all[0] && JSON.stringify(all[0].node.attrs.content).includes('Yeni dipnot');
+        const back = importDocx(exportDocx(t.editor.getJSON(), t.meta)).doc;
+        const rt = footnotesOf(t.editor.schema.nodeFromJSON(back)).length;
+        return { ok: fnCount === 10 && !bad.length && sameP && inserted && all.length === 11 && rt === 11 && t.pages >= 3, fnCount, blocks: blocks.length, bad: bad.length, sameP, inserted, rt, pages: t.pages };
       }
       case 'docx-keep': { // Word documents: headings keep with the next paragraph, no widows/orphans
         const P = (text, a = {}) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), ...a }, content: [{ type: 'text', text }] });

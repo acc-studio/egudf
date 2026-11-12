@@ -15,6 +15,7 @@
 //  - fonts only Office has (Aptos…) → installed equivalents (UYAP is a Java app).
 // The result is the editor's JSON; the codec serializes it as usual.
 import { uyapListType } from './common.js';
+import { defaultParaAttrs } from './codec.js';
 
 /** Office cloud fonts (not installed in Windows) → the nearest installed font. */
 const FONT_FALLBACK = {
@@ -125,11 +126,32 @@ function table(t, opts) {
   };
 }
 
+/**
+ * UYAP has no footnotes: each becomes a superscript number in the text, and the
+ * notes follow at the end of the document under "Dipnotlar".
+ */
+export function flattenFootnotes(blocks) {
+  const notes = [];
+  const walk = (list) => (list || []).map((b) => {
+    if (b.type === 'table') return { ...b, content: (b.content || []).map((r) => ({ ...r, content: (r.content || []).map((c) => ({ ...c, content: walk(c.content) })) })) };
+    if (b.type !== 'paragraph' || !(b.content || []).some((n) => n.type === 'footnote')) return b;
+    return { ...b, content: b.content.map((n) => (n.type === 'footnote' ? (notes.push(n.attrs?.content || []), { type: 'text', text: String(notes.length), marks: [...(n.marks || []).filter((m) => m.type !== 'subscript'), { type: 'superscript' }] }) : n)) };
+  });
+  const out = walk(blocks);
+  if (!notes.length) return out;
+  out.push({ type: 'paragraph', attrs: { ...defaultParaAttrs(), spaceAbove: 12 }, content: [{ type: 'text', text: 'Dipnotlar', marks: [{ type: 'bold' }] }] });
+  notes.forEach((paras, i) => {
+    const list = paras.length ? paras : [{ type: 'paragraph', attrs: defaultParaAttrs() }];
+    list.forEach((p, k) => out.push(k || p.type !== 'paragraph' ? p : { ...p, attrs: { ...defaultParaAttrs(), ...(p.attrs || {}) }, content: [{ type: 'text', text: `${i + 1} `, marks: [{ type: 'superscript' }] }, ...(p.content || [])] }));
+  });
+  return out;
+}
+
 /** A whole document + meta (header/footer) → .udf-representable. Returns { doc, meta }. */
 export function uyapifyDoc(doc, meta) {
   const opts = { base: meta?.base };
   const m = { ...meta };
   if (m.base?.family) m.base = { ...m.base, family: uyapFont(m.base.family) };
   for (const k of ['header', 'footer']) if (m[k]) m[k] = { ...m[k], content: uyapifyBlocks(m[k].content, opts) };
-  return { doc: { ...doc, content: uyapifyBlocks(doc.content, opts) }, meta: m };
+  return { doc: { ...doc, content: uyapifyBlocks(flattenFootnotes(doc.content), opts) }, meta: m };
 }

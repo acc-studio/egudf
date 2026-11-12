@@ -18,7 +18,8 @@ export const paginationKey = new PluginKey('pagination');
 /**
  * Pagination.configure({ getLayout, onLayout })
  * getLayout() → { pageH, top, bottom, gap } in layout px, plus `sheet` (element containing the editor),
- *   `wordRules` (Word documents: keep with next, keep lines together, widow/orphan control)
+ *   `wordRules` (Word documents: keep with next, keep lines together, widow/orphan control),
+ *   `fnHeight(node)` → px a footnote takes at the page bottom, `fnSep` px for the separator line
  *   and optional `firstTop`: page 1's top (no header there, or a taller first-page header)
  * onLayout({ pages, spacers: [{ y, fill }], lastFill }) — called after spacers are placed
  */
@@ -190,6 +191,21 @@ function measure(view, L) {
     for (let k = first; k < units.length; k++) units[k].n = units.length - first;
   });
 
+  // footnotes: each unit carries the height of the footnotes referenced in it
+  if (L.fnHeight) {
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'footnote') return true;
+      let k = units.length - 1;
+      while (k > 0 && units[k].pos > pos) k--;
+      if (units[k]) units[k].fn = (units[k].fn || 0) + L.fnHeight(node);
+      return false;
+    });
+  }
+  const SEP = L.fnSep || 0;
+  let fnUsed = 0; // footnote area already taken on the current page
+  const fnOf = (u) => (u.fn ? u.fn + SEP : 0);
+  const fnAdd = (u) => (u.fn ? u.fn + (fnUsed ? 0 : SEP) : 0);
+
   // The current page only advances when a break is placed: a page is never "entered"
   // by position alone (a line ending a hair past the page end, within tolerance, must
   // not make the next line count as already on the next page — it has no spacer).
@@ -216,8 +232,9 @@ function measure(view, L) {
   for (let j = 0; j < units.length; j++) {
     const u = units[j];
     const t = u.top + shift, b = u.bottom + shift;
-    if (t >= pageEnd(cur) + H) cur = pageOf(t); // after a unit taller than a page
-    if ((u.force || b > pageEnd(cur) + 0.5) && t > pageStart(cur) + 0.5) {
+    if (t >= pageEnd(cur) + H) { cur = pageOf(t); fnUsed = 0; } // after a unit taller than a page
+    // a unit fits if its text and its footnotes fit above the bottom margin
+    if ((u.force || b + fnUsed + fnAdd(u) > pageEnd(cur) + 0.5) && t > pageStart(cur) + 0.5) {
       const k = L.wordRules && !u.force ? keepBack(j) : j;
       const v = units[k];
       const fill = Math.max(0, pageEnd(cur) - (v.top + shift));
@@ -225,9 +242,13 @@ function measure(view, L) {
         breaks.push(v.cells ? { pos: v.pos, fill, cells: v.cells } : { pos: v.pos, fill });
         shift += fill;
         cur++;
+        fnUsed = fnOf(v);
         if (k < j) { j = k; end = Math.max(end, v.bottom + shift); continue; } // re-run the moved units on the new page
+        end = Math.max(end, u.bottom + shift);
+        continue;
       }
     }
+    fnUsed += fnAdd(u);
     end = Math.max(end, u.bottom + shift);
   }
   const pages = Math.max(cur + 1, end - 0.5 <= H1 ? 1 : 1 + Math.ceil((end - 0.5 - H1) / H));

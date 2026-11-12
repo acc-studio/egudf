@@ -485,3 +485,12 @@ body.hide-markup .udf-doc ins.udf-ins { text-decoration: none; color: inherit; }
 .tab-line, .tab-thick { border-bottom: 1px solid currentColor; box-sizing: border-box; }
 .tab-thick { border-bottom-width: 2px; }
 .tab-equals { border-bottom: 3px double currentColor; box-sizing: border-box; }
+
+/* footnotes: the reference number in the text (numbered by a decoration) and the page-bottom block */
+sup.udf-fnref { line-height: 0; cursor: default; }
+sup.udf-fnref::after { content: attr(data-n); font-size: 0.65em; vertical-align: 0.4em; }
+sup.udf-fnref.ProseMirror-selectednode { outline: 1px solid var(--accent); }
+.pg-fns { position: absolute; font-size: 10pt; color: #000; }
+.pg-fn-sep { width: 33%; border-top: 0.75pt solid #000; margin: 0 0 3pt; height: 0; }
+.pg-fns p.udf-p, .pg-measure .pg-fn-item p.udf-p { margin: 0; }
+.pg-fn-n { font-size: 0.65em; vertical-align: 0.4em; line-height: 0; margin-right: 1px; }

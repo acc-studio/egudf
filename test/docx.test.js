@@ -9,6 +9,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { DOMParser } from '@xmldom/xmldom';
 import { exportDocx, importDocx, isDocx } from '../src/interop/docx.js';
 import { newDocMeta, defaultParaAttrs, docText, serializeUdfXml, parseUdfXml } from '../src/udf/codec.js';
+import { flattenFootnotes } from '../src/udf/uyapify.js';
 
 const P = (content, attrs = {}) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), ...attrs }, ...(content ? { content } : {}) });
 const T = (text, marks) => (marks ? { type: 'text', text, marks } : { type: 'text', text });
@@ -99,7 +100,9 @@ test(`docx import: real files (${docs.length})`, { skip: !docs.length && 'no .do
     assert.equal(docText(again.doc), text, f);
     // UDF serialization of an imported Word file round-trips
     const u = parseUdfXml(serializeUdfXml(r.doc, r.meta));
-    assert.equal(docText(u.doc).replace(/\s+/g, ' ').trim(), text.replace(/\s+/g, ' ').trim(), `${f} → udf`);
+    // footnotes become numbered notes at the end of the .udf
+    const want = docText({ type: 'doc', content: flattenFootnotes(r.doc.content) });
+    assert.equal(docText(u.doc).replace(/\s+/g, ' ').trim(), want.replace(/\s+/g, ' ').trim(), `${f} → udf`);
   }
   assert.ok(withText > 0);
 });
