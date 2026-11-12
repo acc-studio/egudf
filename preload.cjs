@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('native', {
   bundledFont: (name) => ipcRenderer.invoke('font:bundled', name),
   info: () => ipcRenderer.invoke('app:info'),
   defaultApps: () => ipcRenderer.invoke('app:defaultApps'),
+  printPdf: (opts) => ipcRenderer.invoke('print:pdf', opts),
   officeFonts: () => ipcRenderer.invoke('fonts:office'),
   officeFontBytes: (file) => ipcRenderer.invoke('fonts:officeBytes', file),
   copyText: (t) => ipcRenderer.invoke('clipboard:writeText', t),

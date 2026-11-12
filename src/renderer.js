@@ -35,6 +35,7 @@ import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wo
 const native = window.native;
 const CM = 28.3465; // points per cm
 const GAP = 18; // px between pages
+const gapOf = (tab) => (tab?.printing ? 0 : GAP); // printing: pages touch, one sheet = one A4 page
 
 const app = {
   tabs: [],
@@ -177,7 +178,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
   tab.editor = createEditor({
     element: $('.mount', host),
     content: doc,
-    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx', fnHeight: (node) => footnoteHeight(tab, node), fnSep: FN_SEP }),
+    getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx', fnHeight: (node) => footnoteHeight(tab, node), fnSep: FN_SEP, gap: gapOf(tab) }),
     onLayout: (L) => drawOverlay(tab, L),
     defaultTab: () => tab.meta.defaultTab || 36,
     onUpdate: (_e, tr) => onDocChange(tab, tr),
@@ -294,13 +295,13 @@ function drawOverlay(tab, L) {
   for (const s of L.spacers) {
     const bottom = s.y + s.fill + g.bottom;
     bottoms.push(bottom);
-    tops.push(bottom + GAP);
+    tops.push(bottom + gapOf(tab));
   }
   bottoms.push(tab.sheet.offsetHeight);
   const n = tops.length;
   let html = '';
   for (let i = 0; i < n; i++) {
-    if (i < n - 1) html += `<div class="pg-band" style="top:${bottoms[i]}px;height:${GAP}px"></div>`;
+    if (i < n - 1 && !tab.printing) html += `<div class="pg-band" style="top:${bottoms[i]}px;height:${GAP}px"></div>`;
     if (hdr && i + 1 >= startPage) html += `<div class="pg-header" style="top:${tops[i] + g.headerOff}px;left:${g.left}px;right:${g.right}px">${hHtml}</div>`;
     if (ftr && fHtml) html += `<div class="pg-footer" style="top:${bottoms[i] - g.footerOff - (pageNo && pn.vert === 'bottom' ? 16 : 0)}px;left:${g.left}px;right:${g.right}px">${fHtml}</div>`;
     if (pageNo) {
@@ -762,7 +763,40 @@ function stripReview(tab) {
 
 async function loadFont(name) { return native.bundledFont(name); }
 
+/**
+ * A Word document's PDF is what the editor shows (footnotes, borders, shading,
+ * Word's spacing…): the pages are laid out again without gaps, at 100 %, and
+ * Chromium prints the sheet, one A4 page per page. A .udf keeps the UDF→PDF
+ * engine, which matches UYAP's own output.
+ */
+async function printWordPdf(tab) {
+  const zoom = app.zoom;
+  const style = document.createElement('style');
+  const land = tab.meta.pageFormat?.paperOrientation && tab.meta.pageFormat.paperOrientation !== '1';
+  style.textContent = `@page { size: A4 ${land ? 'landscape' : 'portrait'}; margin: 0; }`;
+  document.head.append(style);
+  tab.printing = true;
+  document.body.classList.add('printing');
+  try {
+    app.zoom = 1;
+    applyZoom(tab);
+    applyGeometry(tab);
+    tab.editor.commands.repaginate();
+    await new Promise((r) => setTimeout(r, 700)); // pagination + tab stops settle
+    return await native.printPdf({ landscape: !!land });
+  } finally {
+    tab.printing = false;
+    document.body.classList.remove('printing');
+    style.remove();
+    app.zoom = zoom;
+    applyZoom(tab);
+    applyGeometry(tab);
+    tab.editor.commands.repaginate();
+  }
+}
+
 async function makePdf(tab) {
+  if (tab.format === 'docx') return printWordPdf(tab);
   const xml = mergeTemplateData(new TextDecoder().decode(contentBytes(tab))).xml;
   return udfXmlToPdf(xml, loadFont, { title: tab.title });
 }
@@ -1996,7 +2030,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2139,6 +2173,24 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'wordpdf': { // a Word document's PDF is what the editor shows, one A4 page per page
+        const P = (c) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), spaceBelow: 6 }, content: c });
+        const content = [];
+        for (let i = 0; i < 30; i++) content.push(P([{ type: 'text', text: 'Taraflar arasındaki uyuşmazlık, sözleşmenin yorumu ve ifası bakımından değerlendirilmelidir. '.repeat(2) }, ...(i % 6 === 2 ? [{ type: 'footnote', attrs: { id: null, content: [P([{ type: 'text', text: `Dipnot ${i}.` }])] } }] : [])]));
+        const pth = `${out}${sep}wordpdf.docx`;
+        await native.writeFile(pth, exportDocx({ type: 'doc', content }, smokeWordMeta()));
+        const t = await openPath(pth);
+        await wait(800);
+        const pagesBefore = t.pages;
+        const bytes = await makePdf(t);
+        await native.writeFile(`${out}${sep}wordpdf.pdf`, bytes);
+        await wait(500);
+        const { PDFDocument } = await import('pdf-lib');
+        const pdf = await PDFDocument.load(bytes);
+        const sz = pdf.getPage(0).getSize();
+        const a4 = Math.abs(sz.width - 595.3) < 2 && Math.abs(sz.height - 841.9) < 2;
+        return { ok: pdf.getPageCount() === pagesBefore && a4 && t.pages === pagesBefore && !document.body.classList.contains('printing'), pdfPages: pdf.getPageCount(), pagesBefore, after: t.pages, a4, sz };
       }
       case 'tableprops': { // Table properties: Word borders/shading/height/alignment; UYAP border modes in a .udf
         const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });

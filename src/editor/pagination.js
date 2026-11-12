@@ -57,9 +57,9 @@ export const Pagination = Extension.create({
           if (!same) {
             const decos = [];
             result.breaks.forEach((b, i) => {
-              const h = b.fill + L.bottom + L.gap + L.top;
+              const h = b.fill + L.bottom + (L.gap ?? 0) + L.top;
               if (!b.cells) {
-                decos.push(Decoration.widget(b.pos, () => spacer(h, i), { side: -1, ignoreSelection: true, key: `pg-${i}-${Math.round(b.fill * 2)}` }));
+                decos.push(Decoration.widget(b.pos, () => spacer(h, i), { side: -1, ignoreSelection: true, key: `pg-${i}-${Math.round(h * 2)}` } /* the key carries the height: same fill with another gap/margin must redraw */));
                 return;
               }
               b.cells.forEach(([from, to], k) => decos.push(Decoration.node(from, to, {
@@ -71,7 +71,10 @@ export const Pagination = Extension.create({
             tr.setMeta('addToHistory', false);
             view.dispatch(tr);
           }
-          view.dom.style.paddingBottom = `${L.bottom + Math.max(0, result.lastFill)}px`;
+          // the last block's bottom margin (Word spacing after) already takes part of the last page
+          const lastEl = view.dom.lastElementChild;
+          const tail = lastEl ? parseFloat(getComputedStyle(lastEl).marginBottom) || 0 : 0;
+          view.dom.style.paddingBottom = `${Math.max(0, L.bottom + Math.max(0, result.lastFill) - tail)}px`;
           opts.onLayout?.(collectSpacers(view, L, result));
         };
         const onLoad = (e) => { if (e.target?.tagName === 'IMG') schedule(); };

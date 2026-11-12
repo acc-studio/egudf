@@ -712,3 +712,21 @@ it.
   editor draws each mode as UYAP does.
 - **Testing:** new smoke step `tableprops` covers Word settings, their Word
   round trip, and the UYAP border mode written to content.xml.
+
+## 0.24.0: Word documents print as they look (iteration 23)
+
+- **PDF and printing of Word documents** used to go through the UDF→PDF
+  engine, so the PDF lost what a .udf can't hold: page-bottom footnotes,
+  borders, shading, small caps, floating pictures, Word's spacing. A Word
+  document's PDF (Dosya → PDF olarak kaydet, Yazdır) is now exactly what egUDF
+  shows, page for page on A4 (landscape too). A .udf keeps the UDF→PDF engine,
+  whose output matches UYAP's.
+- **Pagination fixes found along the way (all documents):**
+  - A page-gap spacer kept its old height when the layout changed but the
+    page breaks didn't (after changing margins or the header height). Later
+    pages could then drift.
+  - The last paragraph's "space after" made the document a few pixels taller
+    than its pages.
+- **Testing:** new smoke step `wordpdf`: a 2-page Word document with
+  footnotes gives a 2-page A4 PDF, and the editor's layout is restored
+  afterwards.

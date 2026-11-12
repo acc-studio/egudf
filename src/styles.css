@@ -511,3 +511,20 @@ img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: 
 .wd-stop { align-items: flex-end; }
 .wd-preview { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #000; text-align: center; min-height: 52px; }
 .wd-udf { color: #b25a00; font-weight: 600; }
+
+/* printing a Word document: only the active sheet, 1:1, no page shadows/bands, no editing marks */
+@media print {
+  body.printing > *:not(#main-row) { display: none !important; }
+  body.printing #main-row > *:not(#doc-area) { display: none !important; }
+  body.printing #doc-area > *:not(.doc-host) { display: none !important; }
+  body.printing, body.printing #main-row, body.printing #doc-area { display: block !important; overflow: visible !important; height: auto !important; background: #fff !important; padding: 0 !important; margin: 0 !important; }
+  body.printing .doc-host .ruler { display: none !important; }
+  body.printing .doc-host:not(.active) { display: none !important; }
+  body.printing .doc-host.active { overflow: visible !important; padding: 0 !important; height: auto !important; background: #fff !important; position: static !important; }
+  body.printing .zoom-box { width: auto !important; height: auto !important; margin: 0 !important; }
+  body.printing .sheet { transform: none !important; box-shadow: none !important; margin: 0 !important; }
+  body.printing .udf-doc .spell-err, body.printing .selectedCell::after, body.printing .ProseMirror-gapcursor { text-decoration: none !important; background: none !important; display: none; }
+  body.printing .udf-doc .spell-err { display: inline; }
+  body.printing .udf-doc .udf-field { background: none !important; border: none !important; }
+  body.printing .udf-doc table.udf-noborder td, body.printing .udf-doc table.udf-noborder th { border-color: transparent !important; }
+}

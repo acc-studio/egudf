@@ -317,6 +317,8 @@ ipcMain.on('app:close-ok', () => { allowClose = true; win?.close(); });
 // Windows Settings → Default apps → egUDF (registered by the installer, see build/installer.nsh)
 ipcMain.handle('fonts:office', () => Object.fromEntries(Object.entries(officeFonts()).map(([k, v]) => [k, v.faces])));
 ipcMain.handle('fonts:officeBytes', (_e, file) => officeFontBytes(file));
+// Word documents: the editor's own pages as PDF (the renderer hides everything but the sheet)
+ipcMain.handle('print:pdf', async (e, { landscape } = {}) => new Uint8Array(await e.sender.printToPDF({ printBackground: true, preferCSSPageSize: true, landscape: !!landscape, margins: { marginType: 'none' } })));
 ipcMain.handle('app:defaultApps', () => shell.openExternal(process.platform === 'win32' ? 'ms-settings:defaultapps?registeredAppUser=egUDF' : 'about:blank'));
 ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, smoke: SMOKE != null }));
 ipcMain.handle('clipboard:writeText', (_e, t) => clipboard.writeText(String(t)));
