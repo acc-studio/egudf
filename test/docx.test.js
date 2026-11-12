@@ -106,3 +106,27 @@ test(`docx import: real files (${docs.length})`, { skip: !docs.length && 'no .do
   }
   assert.ok(withText > 0);
 });
+
+test('Word paragraph styles survive (headings stay headings: navigation pane, TOC)', async () => {
+  const { zipSync, strToU8 } = await import('fflate');
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const files = {
+    '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
+    '_rels/.rels': strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'),
+    'word/_rels/document.xml.rels': strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'),
+    'word/styles.xml': strToU8(`<?xml version="1.0"?><w:styles ${W}><w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Balk1"><w:name w:val="heading 1"/><w:basedOn w:val="a"/><w:next w:val="a"/><w:pPr><w:numPr><w:numId w:val="9"/></w:numPr><w:jc w:val="center"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style></w:styles>`),
+    'word/document.xml': strToU8(`<?xml version="1.0"?><w:document ${W}><w:body><w:p><w:pPr><w:pStyle w:val="Balk1"/></w:pPr><w:r><w:t>Giriş</w:t></w:r><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t> notu</w:t></w:r></w:p><w:p><w:r><w:t>Metin</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`),
+  };
+  const r = importDocx(zipSync(files));
+  assert.equal(r.doc.content[0].attrs.styleId, 'Balk1');
+  assert.equal(r.meta.docxStyles.Balk1.outline, 0);
+  const out = unzipSync(exportDocx(r.doc, r.meta, r.review));
+  const doc = strFromU8(out['word/document.xml']), styles = strFromU8(out['word/styles.xml']);
+  assert.match(doc, /<w:pPr><w:pStyle w:val="Balk1"\/>/);
+  assert.match(styles, /w:styleId="Balk1"[\s\S]*<w:basedOn w:val="Normal"\/>/); // the localized default style id is ours now
+  assert.doesNotMatch(styles, /<w:numId w:val="9"\/>/); // numbering references to parts not written are dropped
+  assert.match(doc, /<w:b w:val="0"\/>/); // " notu" is not bold although the style is
+  const back = importDocx(exportDocx(r.doc, r.meta, r.review));
+  assert.deepEqual(back.doc.content.map((p) => [p.attrs.styleId, p.attrs.align]), [['Balk1', 'center'], [null, 'left']]);
+  assert.ok(!back.doc.content[0].content[1].marks?.some((m) => m.type === 'bold'));
+});

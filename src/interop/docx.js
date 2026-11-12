@@ -11,7 +11,7 @@
 // formats mapped to UYAP list types, fields reduced to their result text, and
 // line/page breaks turned into paragraph breaks (UDF has no in-paragraph break).
 import { readPageNumber, writePageNumber } from '../udf/pagenum.js';
-import { DOMParser } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { listLabel, A4, uyapLevelType } from '../udf/common.js';
 import { defaultParaAttrs, newDocMeta, cssSizeToPt } from '../udf/codec.js';
@@ -104,9 +104,34 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     s += pick('<w:u ');
     if (hl && /^[0-9a-f]{6}$/i.test(hl)) s += `<w:shd w:val="clear" w:color="auto" w:fill="${hl}"/>`;
     s += pick('<w:vertAlign');
+    if (curStyleR && !change?.__inner) {
+      const st = curStyleR;
+      const has = (t) => marks.some((m) => m.type === t);
+      let pre = '', post = '';
+      if (st.family && st.family !== base.family && !family) pre += `<w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}"/>`;
+      if (st.bold && !has('bold')) pre += '<w:b w:val="0"/><w:bCs w:val="0"/>';
+      if (st.italic && !has('italic')) pre += '<w:i w:val="0"/><w:iCs w:val="0"/>';
+      if (st.caps && !fx.allCaps) pre += '<w:caps w:val="0"/>';
+      if (st.smallCaps && !fx.smallCaps) pre += '<w:smallCaps w:val="0"/>';
+      if (st.strike && !has('strike')) pre += '<w:strike w:val="0"/>';
+      if (st.color && st.color !== '#000000' && !color) post += '<w:color w:val="auto"/>';
+      if (st.size && st.size !== base.size && !size) post += `<w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/>`;
+      if (st.underline && !has('underline')) post += '<w:u w:val="none"/>';
+      // keep the schema order: rFonts/b/i/caps/strike first, color/sz/u after
+      if (pre || post) s = mergeRPr(s, pre, post);
+    }
     if (change) s += `<w:rPrChange ${revAttrs(change)}>${rPr(change.attrs?.before || []) || '<w:rPr/>'}</w:rPrChange>`;
     return s ? `<w:rPr>${s}</w:rPr>` : '';
   }
+
+  let curStyleR = null; // the current paragraph's style run properties (for explicit "not bold"…)
+  const mergeRPr = (s, pre, post) => {
+    // s is in schema order; put pre before the first of color/sz/u/shd/vertAlign, post after sz-ish entries
+    const cut = s.search(/<w:(color|spacing|sz|szCs|u |shd|vertAlign)\b/);
+    const head = cut < 0 ? s : s.slice(0, cut), tail = cut < 0 ? '' : s.slice(cut);
+    const dropDup = (frag, have) => frag.replace(/<w:(\w+)\b[^>]*\/>/g, (m, n) => (new RegExp(`<w:${n}\\b`).test(have) ? '' : m));
+    return dropDup(pre, head) + head + dropDup(post, tail) + tail;
+  };
 
   function textRuns(text, marks, del = false, change = null) {
     const pr = rPr(marks, change);
@@ -148,6 +173,8 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
 
   function pPr(a, { inCell, inner = false } = {}) {
     let s = '';
+    const styled = !!(a.styleId && meta.docxStyles?.[a.styleId]);
+    if (styled) s += `<w:pStyle w:val="${x(a.styleId)}"/>`;
     if (a.keepNext) s += '<w:keepNext/>';
     if (a.keepLines) s += '<w:keepLines/>';
     if (a.pageBreakBefore) s += '<w:pageBreakBefore/>';
@@ -170,9 +197,10 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     const line = fixed ? tw(a.lineHeight) : Math.round(240 * (1 + (a.lineSpacing || 0)));
     s += `<w:spacing w:before="${tw(a.spaceAbove)}" w:after="${tw(a.spaceBelow)}" w:line="${line}" w:lineRule="${fixed ? a.lineRule : 'auto'}"/>`;
     const fl = a.firstLineIndent || 0;
-    if (a.leftIndent || a.rightIndent || fl || a.list) s += `<w:ind w:left="${tw(a.leftIndent)}" w:right="${tw(a.rightIndent)}"${fl < 0 ? ` w:hanging="${tw(-fl)}"` : ` w:firstLine="${tw(fl)}"`}/>`;
+    if (a.leftIndent || a.rightIndent || fl || a.list || styled) s += `<w:ind w:left="${tw(a.leftIndent)}" w:right="${tw(a.rightIndent)}"${fl < 0 ? ` w:hanging="${tw(-fl)}"` : ` w:firstLine="${tw(fl)}"`}/>`;
     const jc = { center: 'center', right: 'right', justify: 'both' }[a.align];
     if (jc) s += `<w:jc w:val="${jc}"/>`;
+    else if (styled) s += '<w:jc w:val="left"/>'; // the style may center it
     // paragraph mark font (what an empty paragraph's height comes from)
     if (a.strut?.size || a.strut?.family) s += `<w:rPr>${a.strut.family ? `<w:rFonts w:ascii="${x(a.strut.family)}" w:hAnsi="${x(a.strut.family)}" w:cs="${x(a.strut.family)}"/>` : ''}${a.strut.size ? `<w:sz w:val="${Math.round(a.strut.size * 2)}"/><w:szCs w:val="${Math.round(a.strut.size * 2)}"/>` : ''}</w:rPr>`;
     void inCell;
@@ -183,6 +211,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
 
   function paragraph(n, opts) {
     const a = { ...defaultParaAttrs(), ...(n.attrs || {}) };
+    curStyleR = a.styleId ? meta.docxStyles?.[a.styleId]?.r || null : null;
     let body = '';
     for (const c of n.content || []) {
       body += commentBoundary(c.marks);
@@ -368,7 +397,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     rel('http://schemas.microsoft.com/office/2011/relationships/commentsExtended', 'commentsExtended.xml');
   }
 
-  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${x(base.family)}" w:hAnsi="${x(base.family)}" w:cs="${x(base.family)}" w:eastAsia="${x(base.family)}"/><w:sz w:val="${Math.round(base.size * 2)}"/><w:szCs w:val="${Math.round(base.size * 2)}"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>${Object.entries(meta.docxStyles || {}).filter(([id]) => !OWN_STYLES.has(id)).map(([, v]) => v.xml).join('')}<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
   const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${bodyXml}${sect}</w:body></w:document>`;
   const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${x(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`;
   const exts = [...new Set(media.map((m) => m.ext))];
@@ -393,6 +422,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   return zipSync(files, { level: 6 });
 }
 
+const OWN_STYLES = new Set(['Normal', 'CommentReference', 'CommentText', 'FootnoteText', 'FootnoteReference', 'TableNormal']);
 const TAB_ALIGN_OUT = { 0: 'left', 1: 'right', 2: 'center', 4: 'decimal' };
 const TAB_LEADER_OUT = { 1: 'dot', 2: 'hyphen', 3: 'underscore', 4: 'heavy', 5: 'underscore' };
 const BORDER_OUT = { solid: 'single', double: 'double', dotted: 'dotted', dashed: 'dashed' };
@@ -478,7 +508,7 @@ export function importDocx(bytes, opts = {}) {
     defR = kid(kid(dd, 'rPrDefault'), 'rPr');
     defP = kid(kid(dd, 'pPrDefault'), 'pPr');
     for (const s of kids(stylesDom.documentElement, 'style')) {
-      styleMap[wa(s, 'styleId')] = { type: wa(s, 'type'), basedOn: wa(kid(s, 'basedOn'), 'val'), pPr: kid(s, 'pPr'), rPr: kid(s, 'rPr'), tblPr: kid(s, 'tblPr'), tcPr: kid(s, 'tcPr'), isDefault: wa(s, 'default') === '1' };
+      styleMap[wa(s, 'styleId')] = { el: s, type: wa(s, 'type'), basedOn: wa(kid(s, 'basedOn'), 'val'), pPr: kid(s, 'pPr'), rPr: kid(s, 'rPr'), tblPr: kid(s, 'tblPr'), tcPr: kid(s, 'tcPr'), isDefault: wa(s, 'default') === '1' };
     }
   }
   const defaultPStyle = Object.entries(styleMap).find(([, s]) => s.type === 'paragraph' && s.isDefault)?.[0];
@@ -678,6 +708,8 @@ export function importDocx(bytes, opts = {}) {
     return blocks.length ? blocks : [{ type: 'paragraph', attrs: defaultParaAttrs() }];
   };
 
+  const usedStyles = new Set(); // paragraph styles in use (kept for Word: headings, TOC)
+
   // ---- blocks
   const docRels = relsOf('word/document.xml');
   const activeComments = new Set();
@@ -751,6 +783,7 @@ export function importDocx(bytes, opts = {}) {
     if (pp.widowControl === false) attrs.widowControl = false;
     if (pp.border) attrs.border = pp.border;
     if (pp.shading) attrs.shading = pp.shading;
+    if (pStyle && pStyle !== defaultPStyle && styleMap[pStyle]?.type === 'paragraph') { attrs.styleId = pStyle; usedStyles.add(pStyle); }
     if (pp.tabs?.length) attrs.tabSet = pp.tabs.map((t) => `${t.pos}:${t.align}:${t.leader}`).join(',');
     const pch = kid(ppr, 'pPrChange');
     if (pch) {
@@ -996,6 +1029,28 @@ export function importDocx(bytes, opts = {}) {
     if (fp && files[fp]) fc = takePn(fp, parseBlocks(xml(fp).documentElement, relsOf(fp)), 'bottom');
     if (pn || fc.some((bl) => bl.content?.length)) meta.footer = { attrs: writePageNumber({ background: '-1', foreground: '-16777216' }, pn), content: fc.length ? fc : [{ type: 'paragraph', attrs: defaultParaAttrs() }] };
   }
+  // the styles in use, as Word wrote them (minus numbering/rsid references to parts not kept)
+  meta.docxStyles = {};
+  const ser = new XMLSerializer();
+  for (const id of usedStyles) {
+    for (let cur = id, i = 0; cur && cur !== defaultPStyle && styleMap[cur] && i < 10; cur = styleMap[cur].basedOn, i++) {
+      if (meta.docxStyles[cur]) continue;
+      const r = readRPr(chain(cur, 'rPr'));
+      let sx = ser.serializeToString(styleMap[cur].el)
+        .replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, '').replace(/<w:rsid\b[^>]*\/>/g, '').replace(/<w:link\b[^>]*\/>/g, '');
+      if (defaultPStyle) sx = sx.replace(new RegExp(`(<w:basedOn w:val=")${defaultPStyle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`), '$1Normal"');
+      meta.docxStyles[cur] = { xml: sx, r: { bold: r.bold, italic: r.italic, underline: r.underline, strike: r.strike, caps: r.caps, smallCaps: r.smallCaps, size: r.size, family: r.family, color: r.color } };
+    }
+  }
+  // heading level (Word's outline level), inherited through basedOn
+  for (const [id, v] of Object.entries(meta.docxStyles)) {
+    for (let cur = id, i = 0; cur && i < 10; cur = styleMap[cur]?.basedOn, i++) {
+      const el = styleMap[cur]?.el;
+      const ol = el && kid(kid(el, 'pPr'), 'outlineLvl');
+      if (ol) { const n = parseInt(wa(ol, 'val'), 10); if (n >= 0 && n < 9) v.outline = n; break; }
+    }
+  }
+  for (const v of Object.values(meta.docxStyles)) v.xml = v.xml.replace(/<w:next w:val="([^"]*)"\/>/, (m, n) => (meta.docxStyles[n] ? m : '<w:next w:val="Normal"/>'));
   for (const c of Object.values(cById)) comments.push(c);
   return { doc: { type: 'doc', content }, meta, review: { comments }, warnings: unsupported(files) };
 }

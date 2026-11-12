@@ -1683,6 +1683,9 @@ function refreshNav() {
     doc.descendants((node, pos) => {
       if (node.type.name === 'table') return false;
       if (node.type.name !== 'paragraph' || !node.content.size) return node.type.name !== 'paragraph';
+      // Word headings: the style's outline level, as Word's navigation pane
+      const ol = app.active?.meta.docxStyles?.[node.attrs.styleId]?.outline;
+      if (ol != null) { const label = node.textContent.trim().slice(0, 110); if (label) items.push({ label, pos, cls: ol === 0 ? 'l1' : 'l2' }); return false; }
       const first = node.firstChild;
       const bold = first?.marks.some((m) => m.type.name === 'bold');
       if (!bold) return false;

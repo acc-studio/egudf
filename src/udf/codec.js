@@ -136,6 +136,8 @@ export function defaultParaAttrs() {
     // strut { size (pt), family }: the paragraph's own font when it differs from the
     // document's — Word sizes lines from the runs (and empty paragraphs from the mark)
     strut: null,
+    // Word paragraph style id (Heading 1…), kept so Word still sees headings (navigation, TOC)
+    styleId: null,
   };
 }
 

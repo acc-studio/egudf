@@ -602,3 +602,27 @@ highlights.
 - **Testing:** new smoke step `htmlpaste` covers Word-style HTML (with class
   CSS, list paragraphs, tabs and highlight) and Google Docs-style nested
   lists.
+
+## 0.19.0: Word styles survive a save (iteration 18)
+
+- **Headings stay headings:** egUDF used to save a Word document's Heading 1,
+  Heading 2… as plain formatted text, so Word lost its navigation pane, table
+  of contents and outline after a save. Paragraph styles are now kept and
+  written back with their original definitions.
+  - Checked in Word on a Turkish-template document: Başlık 1 and Başlık 2
+    keep their outline levels; Liste Paragraf, bold, sizes and alignment are
+    identical.
+  - The page looks exactly as before: everything egUDF shows is still
+    written explicitly. Where a style would add something the text doesn't
+    have, the text says so ("not bold" inside a bold heading style, left
+    aligned in a centered style).
+  - References to parts egUDF doesn't write (style-linked numbering) are
+    dropped, so Word never finds a broken link.
+- **egUDF's navigation pane** (Gezinti → Başlıklar) uses the real heading
+  levels in Word documents, as Word's navigation pane does, instead of
+  guessing from bold or uppercase text.
+- **Testing:**
+  - A new unit test covers a localized heading based on a localized default
+    style, with numbering, a centered style, and a non-bold run inside a bold
+    style.
+  - The 80 real .docx files still round-trip.
