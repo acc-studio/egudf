@@ -11,7 +11,7 @@ npm run smoke      # electron . --smoke=test/.out [file.udf] — renderer drives
 npm run smoke:packaged  # same steps inside release/win-unpacked/egUDF.exe → test/.pkg (run before shipping an installer)
 npm run rebuild    # electron-rebuild pkcs11js (native; needs VS 2022 Build Tools + Python)
 npm run dist       # electron-builder → release/
-GH_TOKEN=$(gh auth token) npm run release   # build + publish to GitHub Releases (acc-studio/egudf, public): installed copies auto-update from there (lib/updater.js)
+npm run release    # build + publish to GitHub Releases via gh (tools/release.mjs) (acc-studio/egudf, public): installed copies auto-update from there (lib/updater.js)
 ```
 To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--pgdebug` runs a short pagination-only scenario with a `debug` step dumping breaks.
 

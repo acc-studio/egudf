@@ -12,7 +12,7 @@
     "rebuild": "electron-rebuild -f -w pkcs11js",
     "dist": "npm run build && electron-builder --publish never",
     "postinstall": "electron-rebuild -f -w pkcs11js",
-    "release": "npm run build && electron-builder --publish always"
+    "release": "npm run dist && node tools/release.mjs"
   },
   "author": "Aziz Can Cengiz",
   "license": "MIT",
