@@ -494,3 +494,8 @@ sup.udf-fnref.ProseMirror-selectednode { outline: 1px solid var(--accent); }
 .pg-fn-sep { width: 33%; border-top: 0.75pt solid #000; margin: 0 0 3pt; height: 0; }
 .pg-fns p.udf-p, .pg-measure .pg-fn-item p.udf-p { margin: 0; }
 .pg-fn-n { font-size: 0.65em; vertical-align: 0.4em; line-height: 0; margin-right: 1px; }
+
+/* Word floating pictures over the text ("in front of" / "behind" text), positioned in their paragraph */
+.udf-doc p.udf-p:has(> img.wrap-abs), .pg-header p.udf-p:has(> img.wrap-abs), .pg-footer p.udf-p:has(> img.wrap-abs) { position: relative; }
+img.udf-img.wrap-front { z-index: 2; }
+img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: none; }

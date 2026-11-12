@@ -648,3 +648,20 @@ highlights.
     same theme, same heading level. The properties and theme files are
     byte-identical.
   - New smoke step `bookmarks` covers Ctrl+click navigation.
+
+## 0.21.0: Floating pictures (iteration 20)
+
+- **Floating pictures** (logos, stamps, signatures placed beside or behind
+  text; in 25 of the 343 documents) used to become plain inline pictures, and
+  their position was lost on save.
+  - **On screen:**
+    - Pictures with square or tight wrapping float left or right, with the
+      text around them.
+    - "Top and bottom" pictures sit on their own line at their offset.
+    - "In front of text" and "behind text" pictures are placed over their
+      paragraph at Word's offsets.
+  - **Saving to .docx:** the picture's position and wrapping are written
+    back exactly as Word stored them, at their current size. Checked in
+    Word: same position, size and wrapping.
+  - **In .udf:** UYAP only has inline pictures, so floating ones become
+    inline when a Word document is saved as .udf.

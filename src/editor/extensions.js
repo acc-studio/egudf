@@ -127,13 +127,22 @@ export const UdfImage = Node.create({
       width: { default: null, parseHTML: (el) => numAttr(el.getAttribute('data-w')) ?? (el.width ? el.width * 0.75 : null) },
       height: { default: null, parseHTML: (el) => numAttr(el.getAttribute('data-h')) ?? (el.height ? el.height * 0.75 : null) },
       extra: { default: null, parseHTML: (el) => { try { return JSON.parse(el.dataset.extra || 'null'); } catch { return null; } } },
+      // Word floating picture: { mode: square|topBottom|behind|front, side: left|right|center, x, y (pt), xml (wp:anchor as Word wrote it) }
+      wrap: { default: null, parseHTML: (el) => { try { return JSON.parse(el.dataset.wrap || 'null'); } catch { return null; } } },
     };
   },
   parseHTML() { return [{ tag: 'img[src]' }]; },
   renderHTML({ node }) {
-    const { src, width, height, extra } = node.attrs;
-    const style = [width ? `width:${pt(width)}` : '', height ? `height:${pt(height)}` : ''].filter(Boolean).join(';');
-    return ['img', mergeAttributes({ src, style, 'data-w': width, 'data-h': height, 'data-extra': extra ? JSON.stringify(extra) : null, class: 'udf-img' })];
+    const { src, width, height, extra, wrap } = node.attrs;
+    const s = [width ? `width:${pt(width)}` : '', height ? `height:${pt(height)}` : ''];
+    let cls = 'udf-img';
+    if (wrap) {
+      // an approximation in the flow: text wraps around floats, "in front/behind" sit over the paragraph
+      if (wrap.mode === 'square') s.push(wrap.side === 'center' ? 'display:block;margin:0 auto' : `float:${wrap.side === 'right' ? 'right' : 'left'};margin:${wrap.side === 'right' ? '0 0 4pt 9pt' : '0 9pt 4pt 0'}`);
+      else if (wrap.mode === 'topBottom') s.push(wrap.side === 'right' ? 'display:block;margin-left:auto' : wrap.side === 'center' ? 'display:block;margin:0 auto' : `display:block;margin-left:${pt(Math.max(0, wrap.x || 0))}`);
+      else { cls += ` wrap-abs ${wrap.mode === 'behind' ? 'wrap-behind' : 'wrap-front'}`; s.push(`position:absolute;left:${pt(wrap.x || 0)};top:${pt(wrap.y || 0)}`); }
+    }
+    return ['img', mergeAttributes({ src, style: s.filter(Boolean).join(';'), 'data-w': width, 'data-h': height, 'data-extra': extra ? JSON.stringify(extra) : null, 'data-wrap': wrap ? JSON.stringify(wrap) : null, class: cls })];
   },
 });
 const numAttr = (v) => (v == null || v === '' ? null : Number(v));

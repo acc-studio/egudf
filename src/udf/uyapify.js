@@ -75,6 +75,7 @@ function largestRun(n) {
 }
 
 function run(c, shade, base) {
+  if (c.type === 'image' && c.attrs?.wrap) return { ...c, attrs: { ...c.attrs, wrap: null } }; // UYAP: inline pictures only
   if (c.type !== 'text') return c;
   let text = c.text;
   let marks = (c.marks || []).map((m) => ({ ...m, attrs: m.attrs ? { ...m.attrs } : m.attrs }));
