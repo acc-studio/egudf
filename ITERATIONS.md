@@ -694,3 +694,21 @@ it.
 - **Testing:** new smoke step `worddialogs` sets values in both dialogs, as a
   user would, and checks the document. In a .udf it checks that the Word-only
   options are disabled.
+
+## 0.23.0: Table properties (iteration 22)
+
+- **Tablo → Tablo özellikleri**, as Word's Table Properties:
+  - **Tablo:** alignment (left / center / right), indent from the left, and
+    border presets (all borders, outside only, horizontal lines and outside,
+    inside horizontal only, none) with line width and colour.
+  - **Satır:** row height ("at least" or "exactly") and "repeat as header row
+    on each page".
+  - **Hücre:** shading colour and vertical alignment (top / center / bottom)
+    for the selected cells.
+  - Table alignment and indent now show on screen too (before, they were
+    only kept for Word).
+- **In a .udf** the dialog offers UYAP's four table border modes (all lines /
+  row lines and frame / frame only / none). That is all UYAP can store; the
+  editor draws each mode as UYAP does.
+- **Testing:** new smoke step `tableprops` covers Word settings, their Word
+  round trip, and the UYAP border mode written to content.xml.

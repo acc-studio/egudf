@@ -25,6 +25,7 @@ import { selectTablePart, distributeColumns, fitColumns, setColumnWidth, current
 import { exportDocx, importDocx } from './interop/docx.js';
 import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
 import { paragraphDialog, fontDialog } from './worddialogs.js';
+import { tableDialog } from './tabledialog.js';
 import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
 import { layoutTabsDom } from './editor/tabs.js';
 import { footnotesOf } from './editor/footnote.js';
@@ -1228,6 +1229,7 @@ async function runCmd(name, arg, el) {
     }
     case 'paragraphDialog': if (tab) app.lastDialog = paragraphDialog(app, tab, ed); return;
     case 'fontDialog': if (tab) app.lastDialog = fontDialog(app, tab, ed); return;
+    case 'tableProps': if (tab) { app.lastDialog = tableDialog(app, tab, ed); if (!app.lastDialog) toast('İmleci bir tablonun içine koyun.', { type: 'warn' }); } return;
     case 'pastePlain': ed?.commands.focus(); native.edit('pasteAndMatchStyle'); return;
     case 'selectAll': chain().selectAll().run(); return;
     case 'wordCount': wordCountDialog(app); return;
@@ -1994,7 +1996,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2137,6 +2139,51 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'tableprops': { // Table properties: Word borders/shading/height/alignment; UYAP border modes in a .udf
+        const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });
+        const cell = (s) => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [150], udf: {} }, content: [P(s)] });
+        const tbl = { type: 'table', attrs: { udf: { border: 'borderCell' } }, content: [0, 1, 2].map((r) => ({ type: 'tableRow', attrs: { udf: {} }, content: [0, 1, 2].map((c) => cell(`r${r}c${c}`)) })) };
+        const pth = `${out}${sep}tableprops.docx`;
+        await native.writeFile(pth, exportDocx({ type: 'doc', content: [P('Önce'), tbl, P('Sonra')] }, smokeWordMeta()));
+        const t = await openPath(pth);
+        await wait(300);
+        const ed = t.editor;
+        let cpos = null;
+        ed.state.doc.descendants((n, pos) => { if (cpos == null && n.isText && n.text === 'r1c1') cpos = pos; });
+        ed.commands.setTextSelection(cpos + 1);
+        runCmd('tableProps');
+        await wait(150);
+        let b = app.lastDialog;
+        const set = (sel, v) => { const el = b.querySelector(sel); if (el.type === 'checkbox') el.checked = v; else el.value = v; };
+        set('#td-al', 'center'); set('#td-bp', 'outside'); set('#td-rh', '1'); set('#td-rx', 'exact'); set('#td-va', 'center'); set('#td-sh', true); set('#td-shc', '#ffcc00');
+        [...document.querySelectorAll('#modal-root .modal-foot button')].find((x) => x.textContent === 'Uygula').click();
+        await wait(200);
+        const get = () => { const o = {}; ed.state.doc.descendants((n) => { if (n.type.name === 'table') o.t = n; return true; }); return o.t; };
+        const tb = get();
+        const mid = tb.child(1).child(1), corner = tb.child(0).child(0);
+        const ok1 = tb.attrs.fmt?.align === 'center' && mid.attrs.fmt?.bg === '#ffcc00' && mid.attrs.fmt?.valign === 'center' && tb.child(1).attrs.fmt?.exact === true
+          && mid.attrs.fmt?.borders?.top === 'none' && corner.attrs.fmt?.borders?.top?.style === 'solid' && corner.attrs.fmt?.borders?.right === 'none';
+        const back = importDocx(exportDocx(ed.getJSON(), t.meta)).doc.content.find((n) => n.type === 'table');
+        const bm = back.content[1].content[1].attrs.fmt || {};
+        const ok2 = bm.bg === '#ffcc00' && bm.valign === 'center' && back.content[1].attrs.fmt?.exact === true && back.attrs.fmt?.align === 'center';
+        // a .udf: the UYAP border modes
+        const u = newDocument('blank');
+        await wait(150);
+        u.editor.commands.setContent({ type: 'doc', content: [P('x'), JSON.parse(JSON.stringify(tbl))] });
+        u.editor.commands.setTextSelection(6);
+        runCmd('tableProps');
+        await wait(150);
+        b = app.lastDialog;
+        set('#td-mode', 'borderRow');
+        [...document.querySelectorAll('#modal-root .modal-foot button')].find((x) => x.textContent === 'Uygula').click();
+        await wait(150);
+        let mode = null;
+        u.editor.state.doc.descendants((n) => { if (n.type.name === 'table') mode = n.attrs.udf.border; return true; });
+        const udfXml = serializeUdfXml(u.editor.getJSON(), u.meta);
+        u.dirty = false;
+        await closeTab(u);
+        return { ok: ok1 && ok2 && mode === 'borderRow' && /border="borderRow"/.test(udfXml), ok1, ok2, mode };
       }
       case 'worddialogs': { // Word's Paragraph and Font dialogs set everything the model holds
         const p = `${out}${sep}dialogs.docx`;

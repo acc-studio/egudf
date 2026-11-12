@@ -115,7 +115,7 @@ const TABS = {
       btn('tableAlign', 'alignRight', 'Hücre metnini sağa hizala', { arg: 'right' }) + btn('tableAlign', 'alignJustify', 'Hücre metnini iki yana yasla', { arg: 'justify' }),
     )),
     group('Veri', big('tableSortMenu', 'sort', 'Sırala') + col(btn('tableToText', 'textTable', 'Tabloyu sekmeyle ayrılmış metne dönüştür', { label: 'Metne dönüştür' }))),
-    group('Kenarlık', big('tableBorder', 'border', 'Kenarlıkları<br>aç/kapat')),
+    group('Kenarlık', big('tableBorder', 'border', 'Kenarlıkları<br>aç/kapat') + big('tableProps', 'table', 'Tablo<br>özellikleri', { title: 'Kenarlıklar, gölgelendirme, satır yüksekliği, hizalama' })),
   ],
 };
 

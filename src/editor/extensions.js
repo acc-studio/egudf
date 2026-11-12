@@ -195,7 +195,26 @@ const withFmt = (ext, styleOf) => ext.extend({
     return out;
   },
 });
-export const UdfTable = withFmt(withUdf(Table), () => '').configure({ resizable: true, cellMinWidth: 24, lastColumnResizable: true });
+export const UdfTable = withFmt(withUdf(Table), () => '').extend({
+  // Word table alignment / indent: on the table's wrapper (the table node is a node view)
+  addProseMirrorPlugins() {
+    const key = new PluginKey('tableFormat');
+    const build = (doc) => {
+      const decos = [];
+      doc.descendants((n, pos) => {
+        if (n.type.name !== 'table') return true;
+        const f = n.attrs.fmt;
+        if (f?.align || f?.indent) {
+          const style = f.align === 'center' ? 'display:flex;justify-content:center' : f.align === 'right' ? 'display:flex;justify-content:flex-end' : `margin-left:${pt(f.indent || 0)}`;
+          decos.push(Decoration.node(pos, pos + n.nodeSize, { style }));
+        }
+        return false;
+      });
+      return DecorationSet.create(doc, decos);
+    };
+    return [...(this.parent?.() || []), new Plugin({ key, state: { init: (_, { doc }) => build(doc), apply: (tr, old) => (tr.docChanged ? build(tr.doc) : old) }, props: { decorations: (st) => key.getState(st) } })];
+  },
+}).configure({ resizable: true, cellMinWidth: 24, lastColumnResizable: true });
 export const UdfTableRow = withFmt(withUdf(TableRow), (f) => (f.height ? `height:${pt(f.height)}` : ''));
 export const UdfTableCell = withFmt(withUdf(TableCell), cellStyle).extend({ content: 'block+' });
 
