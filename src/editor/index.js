@@ -18,6 +18,7 @@ import { Spell } from './spell.js';
 import { CollabPeers } from '../collab/peers.js';
 import { CommentMark } from '../review/comments.js';
 import { Footnote, FootnoteNumbers } from './footnote.js';
+import { BookmarkMark } from './bookmark.js';
 import { InsertionMark, DeletionMark, FormatChangeMark, TrackChanges } from '../review/changes.js';
 
 export function baseExtensions() {
@@ -61,6 +62,7 @@ export function baseExtensions() {
     ListLabels,
     CommentMark,
     Footnote,
+    BookmarkMark,
     InsertionMark,
     DeletionMark,
     FormatChangeMark,

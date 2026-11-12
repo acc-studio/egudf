@@ -155,6 +155,18 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
 
   const revAttrs = (m) => `w:id="${revId++}" w:author="${x(m.attrs?.author || 'egUDF')}" w:date="${x(normDate(m.attrs?.at))}"`;
 
+  // bookmarks: start/end around the marked text (ids by name)
+  const openBm = new Set();
+  const bmIds = new Map();
+  const bmId = (name) => { if (!bmIds.has(name)) bmIds.set(name, bmIds.size + 1); return bmIds.get(name); };
+  function bookmarkBoundary(marks) {
+    const now = new Set((marks || []).filter((m) => m.type === 'bookmark' && m.attrs?.name).map((m) => m.attrs.name));
+    let s = '';
+    for (const nm of [...openBm]) if (!now.has(nm)) { openBm.delete(nm); s += `<w:bookmarkEnd w:id="${bmId(nm)}"/>`; }
+    for (const nm of now) if (!openBm.has(nm)) { openBm.add(nm); s += `<w:bookmarkStart w:id="${bmId(nm)}" w:name="${x(nm)}"/>`; }
+    return s;
+  }
+
   function commentBoundary(marks) {
     const now = new Set((marks || []).filter((m) => m.type === 'comment' && cRefs.has(m.attrs?.id)).map((m) => m.attrs.id));
     let s = '';
@@ -214,7 +226,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     curStyleR = a.styleId ? meta.docxStyles?.[a.styleId]?.r || null : null;
     let body = '';
     for (const c of n.content || []) {
-      body += commentBoundary(c.marks);
+      body += commentBoundary(c.marks) + bookmarkBoundary(c.type === 'text' ? c.marks : []);
       if (c.type === 'image') { body += imageRun(c); continue; }
       if (c.type === 'hardBreak') { body += '<w:r><w:br/></w:r>'; continue; }
       if (c.type === 'footnote') { footnotes.push(c.attrs?.content || []); body += `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${footnotes.length}"/></w:r>`; continue; }
@@ -222,7 +234,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       const ins = c.marks?.find((m) => m.type === 'insertion');
       const del = c.marks?.find((m) => m.type === 'deletion');
       const fc = c.marks?.find((m) => m.type === 'formatChange');
-      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun', 'formatChange', 'link'].includes(m.type));
+      const marks = (c.marks || []).filter((m) => !['insertion', 'deletion', 'comment', 'udfRun', 'formatChange', 'link', 'bookmark'].includes(m.type));
       const link = c.marks?.find((m) => m.type === 'link')?.attrs?.href;
       const wrap = (xml) => {
         if (!link) return xml;
@@ -305,7 +317,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   const pageW = tw(land ? A4.h : A4.w), pageH = tw(land ? A4.w : A4.h);
   const margin = (k, d) => tw(parseFloat(pf[k]) || d);
   const contentTw = pageW - margin('leftMargin', 70.875) - margin('rightMargin', 70.875);
-  const bodyXml = blocks(doc.content || [], contentTw) + [...openComments].map(closeComment).join('');
+  const bodyXml = blocks(doc.content || [], contentTw) + [...openComments].map(closeComment).join('') + bookmarkBoundary([]);
 
   // header / footer
   const parts = {};
@@ -344,6 +356,9 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     if (titlePg) footerRef += `<w:footerReference w:type="first" r:id="${fid}"/>`;
   }
   const sect = `<w:sectPr>${headerRef}${footerRef}<w:pgSz w:w="${pageW}" w:h="${pageH}"${land ? ' w:orient="landscape"' : ''}/><w:pgMar w:top="${margin('topMargin', 56.7)}" w:right="${margin('rightMargin', 70.875)}" w:bottom="${margin('bottomMargin', 56.7)}" w:left="${margin('leftMargin', 70.875)}" w:header="${margin('headerFOffset', 20)}" w:footer="${margin('footerFOffset', 20)}" w:gutter="0"/>${titlePg ? '<w:titlePg/>' : ''}</w:sectPr>`;
+
+  // the document's theme, unchanged (kept styles use its fonts and colours)
+  if (meta.docxParts?.theme) { parts['word/theme/theme1.xml'] = meta.docxParts.theme; rel('http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme', 'theme/theme1.xml'); }
 
   // footnotes: separators -1/0, then the notes; the first paragraph starts with the number
   let footnotesXml = '';
@@ -401,20 +416,21 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
   const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${bodyXml}${sect}</w:body></w:document>`;
   const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${x(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('')}</Relationships>`;
   const exts = [...new Set(media.map((m) => m.ext))];
-  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map((e) => `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('')}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${footnotesXml ? '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>' : ''}${numbering ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}${commentsXml ? '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>' : ''}${Object.keys(parts).filter((k) => /^word\/(header|footer)\d+\.xml$/.test(k)).map((k) => `<Override PartName="/${k}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${k.includes('header') ? 'header' : 'footer'}+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map((e) => `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('')}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${footnotesXml ? '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>' : ''}${numbering ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}${commentsXml ? '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>' : ''}${Object.keys(parts).filter((k) => /^word\/(header|footer)\d+\.xml$/.test(k)).map((k) => `<Override PartName="/${k}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${k.includes('header') ? 'header' : 'footer'}+xml"/>`).join('')}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>${meta.docxParts?.theme ? '<Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>' : ''}${meta.docxParts?.app ? '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>' : ''}</Types>`;
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>egUDF</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</dcterms:created></cp:coreProperties>`;
 
   const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}><w:defaultTabStop w:val="${tw(meta.defaultTab || 36)}"/>${footnotesXml ? '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>' : ''}<w:characterSpacingControl w:val="doNotCompress"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
   const files = {
     'word/settings.xml': strToU8(settings),
     '[Content_Types].xml': strToU8(ct),
-    '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>'),
-    'docProps/core.xml': strToU8(core),
+    '_rels/.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>${meta.docxParts?.app ? '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>' : ''}</Relationships>`),
+    'docProps/core.xml': strToU8(meta.docxParts?.core || core),
     'word/document.xml': strToU8(docXml),
     'word/styles.xml': strToU8(styles),
     'word/_rels/document.xml.rels': strToU8(relsXml),
   };
   if (numbering) files['word/numbering.xml'] = strToU8(numbering);
+  if (meta.docxParts?.app) files['docProps/app.xml'] = strToU8(meta.docxParts.app);
   if (footnotesXml) files['word/footnotes.xml'] = strToU8(footnotesXml);
   if (commentsXml) { files['word/comments.xml'] = strToU8(commentsXml); files['word/commentsExtended.xml'] = strToU8(commentsExXml); }
   for (const [k, v] of Object.entries(parts)) files[k] = strToU8(v);
@@ -713,6 +729,7 @@ export function importDocx(bytes, opts = {}) {
   // ---- blocks
   const docRels = relsOf('word/document.xml');
   const activeComments = new Set();
+  const activeBookmarks = new Map(); // w:id → name
   let listSeq = 0;
   const listIds = {};
 
@@ -794,6 +811,7 @@ export function importDocx(bytes, opts = {}) {
       attrs.fmtChange = { author: wa(pch, 'author') || 'Word', at: wa(pch, 'date') || '', before };
     }
     const paras = [[]];
+    const after = []; // blocks that follow this paragraph (text-box content)
     const pageBreaks = new Set(); // indexes of pieces that follow a page break
     const fields = []; // fldChar stack: 'instr' until separate, then 'result'
     const inInstr = () => fields.includes('instr');
@@ -802,7 +820,8 @@ export function importDocx(bytes, opts = {}) {
       if (!text) return;
       for (const id of activeComments) if (cById[id] && cById[id].quote.length < 200) cById[id].quote += text;
       const cm = [...activeComments].map((id) => ({ type: 'comment', attrs: { id } }));
-      cur().push({ type: 'text', text, marks: [...marks, ...cm] });
+      const bm = [...activeBookmarks.values()].map((name) => ({ type: 'bookmark', attrs: { name } }));
+      cur().push({ type: 'text', text, marks: [...marks, ...cm, ...bm] });
     };
     const runFonts = []; // resolved { size, family } of every run with text
     const run = (r, extraMarks) => {
@@ -813,8 +832,10 @@ export function importDocx(bytes, opts = {}) {
       const marks = [...marksOf(rp), ...extraMarks];
       const rch = kid(rpr, 'rPrChange');
       if (rch) marks.push({ type: 'formatChange', attrs: { author: wa(rch, 'author') || 'Word', at: wa(rch, 'date') || '', before: marksOf(readRPr([...styleR, ...chain(rStyle, 'rPr'), kid(rch, 'rPr')])) } });
-      for (const c of kids(r)) {
+      const each = (parent) => { for (const c of kids(parent)) {
         switch (c.localName) {
+          // Word 2010+ shapes: the modern branch, never both (the fallback repeats it as VML)
+          case 'AlternateContent': { const ch = kid(c, 'Choice') || kid(c, 'Fallback'); if (ch) each(ch); break; }
           case 't': case 'delText': if (!inInstr()) pushText(c.textContent, marks); break;
           case 'tab': if (!inInstr()) pushText('\t', marks); break;
           case 'br': case 'cr': {
@@ -841,14 +862,20 @@ export function importDocx(bytes, opts = {}) {
           }
           case 'fldChar': { const t = wa(c, 'fldCharType'); if (t === 'begin') fields.push('instr'); else if (t === 'separate') fields[fields.length - 1] = 'result'; else if (t === 'end') fields.pop(); break; }
           case 'drawing': case 'pict': {
+            // a text box: its text follows the paragraph (the floating position is lost, the text is not)
+            const tbx = c.getElementsByTagNameNS(W, 'txbxContent')[0];
+            if (tbx) { after.push(...parseBlocks(tbx, rels, pageTw, tblStyle)); break; }
             const blip = c.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0];
-            const rid = blip?.getAttributeNS(R, 'embed') || blip?.getAttribute('r:embed');
+            const vimg = blip ? null : c.getElementsByTagNameNS('urn:schemas-microsoft-com:vml', 'imagedata')[0]; // older Word (VML)
+            const rid = blip?.getAttributeNS(R, 'embed') || blip?.getAttribute('r:embed') || vimg?.getAttributeNS(R, 'id') || vimg?.getAttribute('r:id');
             const target = rid && rels[rid] ? resolveTarget(rels[rid]) : null;
             const data = target && files[target];
             if (!data) break;
             const ext = c.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing', 'extent')[0];
-            const wPt = ext ? parseFloat(ext.getAttribute('cx')) / EMU_PER_PT : null;
-            const hPt = ext ? parseFloat(ext.getAttribute('cy')) / EMU_PER_PT : null;
+            const vstyle = vimg ? String(vimg.parentNode?.getAttribute?.('style') || '') : '';
+            const vdim = (k) => { const m = new RegExp(`(?:^|;)\\s*${k}:\\s*([\\d.]+)(pt|in|px)?`).exec(vstyle); return m ? parseFloat(m[1]) * (m[2] === 'in' ? 72 : m[2] === 'px' ? 0.75 : 1) : null; };
+            const wPt = ext ? parseFloat(ext.getAttribute('cx')) / EMU_PER_PT : vdim('width');
+            const hPt = ext ? parseFloat(ext.getAttribute('cy')) / EMU_PER_PT : vdim('height');
             const mime = /\.png$/i.test(target) ? 'image/png' : /\.gif$/i.test(target) ? 'image/gif' : /\.bmp$/i.test(target) ? 'image/bmp' : 'image/jpeg';
             if (/\.(emf|wmf|svg)$/i.test(target)) break;
             cur().push({ type: 'image', attrs: { src: `data:${mime};base64,${b64(data)}`, width: wPt ? Math.round(wPt) : null, height: hPt ? Math.round(hPt) : null, extra: null } });
@@ -856,12 +883,14 @@ export function importDocx(bytes, opts = {}) {
           }
           default:
         }
-      }
+      } };
+      each(r);
     };
     const walk = (node, extraMarks) => {
       for (const c of kids(node)) {
         switch (c.localName) {
           case 'r': run(c, extraMarks); break;
+          case 'AlternateContent': { const ch = kid(c, 'Choice') || kid(c, 'Fallback'); if (ch) walk(ch, extraMarks); break; }
           case 'ins': walk(c, [...extraMarks, { type: 'insertion', attrs: { author: wa(c, 'author') || 'Word', at: wa(c, 'date') || '' } }]); break;
           case 'del': walk(c, [...extraMarks, { type: 'deletion', attrs: { author: wa(c, 'author') || 'Word', at: wa(c, 'date') || '' } }]); break;
           case 'hyperlink': {
@@ -874,6 +903,8 @@ export function importDocx(bytes, opts = {}) {
           case 'smartTag': case 'customXml': case 'fldSimple': case 'sdtContent': walk(c, extraMarks); break;
           case 'sdt': walk(kid(c, 'sdtContent'), extraMarks); break;
           case 'commentRangeStart': if (cById[`w${wa(c, 'id')}`]) activeComments.add(`w${wa(c, 'id')}`); break;
+          case 'bookmarkStart': { const nm = wa(c, 'name'); if (nm && nm !== '_GoBack') activeBookmarks.set(wa(c, 'id'), nm); break; }
+          case 'bookmarkEnd': activeBookmarks.delete(wa(c, 'id')); break;
           case 'commentRangeEnd': activeComments.delete(`w${wa(c, 'id')}`); break;
           default:
         }
@@ -904,7 +935,7 @@ export function importDocx(bytes, opts = {}) {
       for (const n of merged) if (n.type === 'text' && !n.marks.length) delete n.marks;
       return merged.length ? { type: 'paragraph', attrs: a, content: merged } : { type: 'paragraph', attrs: a };
     });
-    return { nodes, info: { style: pStyle || '', contextual: !!pp.contextual } };
+    return { nodes: after.length ? [...nodes, ...after] : nodes, info: { style: pStyle || '', contextual: !!pp.contextual } };
   }
 
   function parseTable(t, rels, maxTw = pageTw) {
@@ -985,6 +1016,11 @@ export function importDocx(bytes, opts = {}) {
   const settings = xml('word/settings.xml');
   const dts = settings ? parseFloat(wa(kid(settings.documentElement, 'defaultTabStop'), 'val')) : NaN;
   meta.defaultTab = dts > 0 ? dts / 20 : 36;
+  meta.docxParts = {
+    theme: themePath ? strFromU8(files[themePath]) : null,
+    core: files['docProps/core.xml'] ? strFromU8(files['docProps/core.xml']) : null,
+    app: files['docProps/app.xml'] ? strFromU8(files['docProps/app.xml']) : null,
+  };
   meta.styles = meta.styles.map((s) => (s.name === 'hvl-default' ? { ...s, family: base.family, size: String(base.size) } : s));
   const sect = kid(body, 'sectPr');
   if (sect) {
@@ -1062,7 +1098,9 @@ function unsupported(files) {
   const out = [];
   const add = (n, label) => { if (n) out.push(n > 1 ? `${label} (${n})` : label); };
   add(count(/<w:endnoteReference\b/g), 'son notlar');
-  add(count(/<w:txbxContent\b/g), 'metin kutuları');
+  // text-box text is kept (after its paragraph); only the floating position is lost.
+  // Word writes each box twice (DrawingML + VML fallback)
+  add(Math.ceil(count(/<w:txbxContent\b/g) / (/<mc:AlternateContent\b/.test(doc) ? 2 : 1)), 'metin kutularının konumu');
   add(count(/<m:oMath\b/g), 'denklemler');
   add(count(/<c:chart\b/g), 'grafikler');
   add(count(/<dgm:relIds\b/g), 'SmartArt');

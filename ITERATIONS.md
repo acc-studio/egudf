@@ -626,3 +626,25 @@ highlights.
     style, with numbering, a centered style, and a non-bold run inside a bold
     style.
   - The 80 real .docx files still round-trip.
+
+## 0.20.0: Nothing silently lost from Word files (iteration 19)
+
+- **Text boxes:** their text used to vanish on import. It is now kept as
+  ordinary paragraphs right after the paragraph the box was anchored to. Only
+  the box's floating position is lost, and egUDF says so when the file opens.
+- **Word 2010+ shapes and pictures** wrapped in Word's compatibility container
+  (`mc:AlternateContent`) are read: the modern version only, never twice.
+- **Older pictures** (VML, from Word 2003-era files) are kept, at their size.
+- **Bookmarks and internal links:**
+  - Bookmarks (in 129 of the 343 documents) are kept and saved back, so
+    links like "see article 3" still work in Word after a save.
+  - In egUDF, Ctrl+click on such a link jumps to its bookmark.
+- **Theme and document properties** (author, title, dates, company) are saved
+  back unchanged. The kept heading styles use the theme's fonts, so Word
+  shows them exactly as before.
+- **Testing:**
+  - Checked in Word on a Word-made document with a text box, a floating
+    picture, a bookmark and an internal link: same bookmark and link target,
+    same theme, same heading level. The properties and theme files are
+    byte-identical.
+  - New smoke step `bookmarks` covers Ctrl+click navigation.

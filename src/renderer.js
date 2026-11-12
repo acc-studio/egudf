@@ -27,6 +27,7 @@ import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
 import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
 import { layoutTabsDom } from './editor/tabs.js';
 import { footnotesOf } from './editor/footnote.js';
+import { findBookmark } from './editor/bookmark.js';
 import { contextMenu, formatPainter, stopPainter, changeCase, changeCaseMenu, wordCountDialog, shortcutsDialog, setTheme, themeMenu, THEMES, textStats } from './comfort.js';
 
 const native = window.native;
@@ -202,6 +203,11 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     e.preventDefault();
     const href = a.getAttribute('href');
     if (/^(https?:|mailto:)/i.test(href)) window.open(href);
+    else if (href.startsWith('#')) { // a bookmark in this document
+      const at = findBookmark(tab.editor.state.doc, decodeURIComponent(href.slice(1)));
+      if (at != null) tab.editor.chain().setTextSelection(at).scrollIntoView().run();
+      else toast('Bağlantının hedefi bu belgede yok.', { type: 'warn' });
+    }
   });
   Object.assign(tab.editor.storage.autocorrect, app.ac);
   tab.ruler = createRuler(app, tab);
@@ -2018,7 +2024,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2161,6 +2167,22 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'bookmarks': { // Ctrl+click on an internal link jumps to its bookmark; both survive a Word round trip
+        const P = (c) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: c });
+        const content = [P([{ type: 'text', text: 'Bkz. ' }, { type: 'text', text: 'madde 3', marks: [{ type: 'link', attrs: { href: '#Madde3' } }] }])];
+        for (let i = 0; i < 30; i++) content.push(P([{ type: 'text', text: `Dolgu paragrafı ${i}.` }]));
+        content.push(P([{ type: 'text', text: 'Madde 3 metni.', marks: [{ type: 'bookmark', attrs: { name: 'Madde3' } }] }]));
+        const p = `${out}${sep}bookmarks.docx`;
+        await native.writeFile(p, exportDocx({ type: 'doc', content }, smokeWordMeta()));
+        const t = await openPath(p);
+        await wait(500);
+        const a = t.editor.view.dom.querySelector('a.udf-link[href="#Madde3"]');
+        a?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }));
+        await wait(200);
+        const at = t.editor.state.selection.from;
+        const target = findBookmark(t.editor.state.doc, 'Madde3');
+        return { ok: !!a && target != null && at === target, at, target };
       }
       case 'htmlpaste': { // HTML from Word Online / Outlook / Google Docs / web: lists, spacing, tabs, fonts
         const wordHtml = `<html><head><style>p.MsoNormal{margin:0cm;margin-bottom:8.0pt;line-height:107%;font-size:11.0pt;font-family:"Calibri",sans-serif;}
