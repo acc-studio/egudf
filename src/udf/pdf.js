@@ -246,7 +246,8 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
         else maxSize = Math.max(maxSize, it.size);
       }
       l.ascent = Math.max(imgH, maxSize * 0.891);
-      l.height = Math.max(imgH + maxSize * 0.25, maxSize * 1.15) * (1 + lineSpacing);
+      // UYAP adds LineSpacing × font size per line (not a multiple of the line height)
+      l.height = Math.max(imgH + maxSize * 0.25, maxSize * 1.15) + lineSpacing * maxSize;
       const slack = l.avail - used;
       let shift = 0;
       if (align === 1) shift = slack / 2;

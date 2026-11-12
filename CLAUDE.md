@@ -34,6 +34,9 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
     - Cell backgrounds and row `height` are ignored.
   - Horizontal merge: a row with fewer cells plus its own `columnSpans`. There are no vertical merges.
   - The format has no page breaks; UYAP drops `<page-break/>`.
+  - **Line spacing:** UYAP adds `LineSpacing × font size` to each line (12pt Times: 0.5 → 20pt pitch, 1.0 → 26pt). It is not a multiple of the line height. The editor (`--lsx` in UDF mode) and `src/udf/pdf.js` both use this.
+    - egPDF's copy of the engine still multiplies; port the change there.
+    - Page counts match UYAP on single-spaced, 1.5-spaced and mixed list/table test documents.
   - UYAP adds space-after and space-before; Word uses the larger.
 - **Learning how UYAP writes something:** drive the official editor with `tools/uyap-keys.ps1` (SendKeys; screenshots: `tools/uyap-shot.ps1`) (wait for the full window, not the splash), save, and read its XML. Use only scratch copies.
 - `npm test` asserts parse→serialize→parse idempotency over all real samples; keep it green when touching `src/udf/codec.js`.

@@ -535,3 +535,7 @@ img.udf-img.wrap-behind { z-index: 0; mix-blend-mode: multiply; pointer-events: 
 
 .pg-mask { position: absolute; left: -2px; right: -2px; background: #fff; }
 body.printing .pg-mask { background: #fff !important; }
+
+/* .udf: UYAP adds LineSpacing × font size to each line (measured in Doküman Editörü 5.4.20:
+   12 pt Times, LineSpacing 0.5 → 20 pt pitch, 1.0 → 26 pt), not a multiple of the line */
+.sheet:not(.word-hf) .udf-doc p.udf-p, .sheet:not(.word-hf) .pg-header p.udf-p, .sheet:not(.word-hf) .pg-footer p.udf-p { line-height: calc(var(--lhf, 1.15) + var(--lsx, 0)); }

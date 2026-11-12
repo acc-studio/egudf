@@ -36,7 +36,7 @@ export function paraStyle(a) {
   if (a.strut?.family) s.push(`font-family:'${String(a.strut.family).replace(/'/g, '')}'`);
   if (a.lineRule === 'exact' && a.lineHeight) s.push(`line-height:${pt(a.lineHeight)}`, 'min-height:0');
   else if (a.lineRule === 'atLeast' && a.lineHeight) s.push(`line-height:max(calc(var(--lhf, 1.15) * 1em), ${pt(a.lineHeight)})`);
-  else if (a.lineSpacing) s.push(`--ls:${1 + a.lineSpacing}`);
+  else if (a.lineSpacing) s.push(`--ls:${1 + a.lineSpacing}`, `--lsx:${a.lineSpacing}`);
   return s.join(';');
 }
 

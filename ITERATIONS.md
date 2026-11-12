@@ -768,3 +768,18 @@ it.
 - **Testing:** new smoke step `toc` covers 5 headings over 3 pages: each page
   number matches where its heading lands, every link reaches its heading, and
   the saved .docx contains one TOC field.
+
+## 0.27.0: .udf pages break where UYAP breaks them (iteration 26)
+
+- **Line spacing in .udf, measured in the official editor:** UYAP adds the
+  line spacing times the font size to each line. For 12 pt text, "1.5 lines"
+  gives a 20 pt line pitch and "double" 26 pt. egUDF and its PDF engine
+  multiplied the whole line instead, so 1.5-spaced documents ran about 3.5 %
+  long and double-spaced ones about 6 %. A 1.5-spaced petition could end up a
+  page longer in egUDF than in UYAP.
+  - egUDF's view of a .udf and its PDF now use UYAP's rule. Word documents
+    keep Word's rule.
+- **Parity check:** three test documents (single-spaced; 1.5-spaced, justified,
+  with spacing; mixed lists and tables) now have the same page count in egUDF
+  as in the official editor: 5, 5 and 3. Before, the 1.5-spaced one was 6
+  pages in egUDF and 5 in UYAP.
