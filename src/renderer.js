@@ -3,6 +3,7 @@ import { createEditor, staticHTML } from './editor/index.js';
 import { pageOfPos, paginationKey } from './editor/pagination.js';
 import { parseUdfXml, serializeUdfXml, newDocMeta, docText, defaultParaAttrs } from './udf/codec.js';
 import { readUdf, writeUdf, strToU8 } from './udf/zip.js';
+import { unzipSync } from 'fflate';
 import { udfXmlToPdf } from './udf/pdf.js';
 import { mergeTemplateData } from './udf/template-data.js';
 import { TEMPLATES, BLOCKS } from './udf/templates.js';
@@ -1191,6 +1192,8 @@ async function runCmd(name, arg, el) {
     }
     case 'save': if (tab) await save(tab); return;
     case 'insertFootnote': insertFootnote(tab); return;
+    case 'insertToc': insertToc(tab); return;
+    case 'updateToc': updateToc(tab); return;
     case 'pageBreak': insertPageBreak(tab); return;
     case 'saveAs': if (tab) await save(tab, { as: true }); return;
     case 'close': if (tab) await closeTab(tab); return;
@@ -1709,6 +1712,102 @@ function blockTextMap(node, pos) {
   return { text, map };
 }
 
+/**
+ * The document's headings: Word's outline levels where the document has them,
+ * else egUDF's guess (bold uppercase / centered / "1." "A)" "IV-" titles, as
+ * petitions are written). → [{ pos, node, label, level }]
+ */
+function docHeadings(tab) {
+  const out = [];
+  if (!tab) return out;
+  tab.editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'table') return false;
+    if (node.type.name !== 'paragraph' || !node.content.size) return node.type.name !== 'paragraph';
+    if (node.attrs.toc) return false;
+    const ol = node.attrs.outline ?? tab.meta.docxStyles?.[node.attrs.styleId]?.outline;
+    if (ol != null) { const label = node.textContent.trim().slice(0, 110); if (label) out.push({ pos, node, label, level: ol + 1 }); return false; }
+    const first = node.firstChild;
+    if (!first?.marks.some((m) => m.type.name === 'bold')) return false;
+    let label = '';
+    node.forEach((c) => { if (label !== null && c.isText && c.marks.some((m) => m.type.name === 'bold')) label += c.text; });
+    label = label.split(/\t|:/)[0].trim();
+    if (label.length < 3 || label.length > 110) return false;
+    const letters = label.replace(/[^A-Za-zÇĞİÖŞÜçğıöşü]/g, '');
+    const upper = letters && letters === letters.toLocaleUpperCase('tr');
+    const centered = node.attrs.align === 'center';
+    if (!upper && !centered && !/^([IVX]+|[A-ZÇĞİÖŞÜ]|\d+)[.)-]\s/.test(label)) return false;
+    out.push({ pos, node, label, level: centered ? 1 : (/^[A-ZÇĞİÖŞÜ]\)|^\d/.test(label) ? 2 : 1) });
+    return false;
+  });
+  return out;
+}
+
+/** TOC paragraphs for the current headings (bookmarks are added to the headings). */
+function tocBlocks(tab, tr) {
+  const word = tab.format === 'docx';
+  const width = (tab.geom.pageW - tab.geom.left - tab.geom.right) * 0.75; // pt
+  const heads = docHeadings(tab);
+  const view = tab.editor.view;
+  const schema = tab.editor.schema;
+  let n = 0;
+  return heads.map((hd) => {
+    // a bookmark on the heading, for the link (reuse one the heading already has)
+    let name = null;
+    hd.node.forEach((c) => { const m = c.marks.find((k) => k.type.name === 'bookmark' && /^_Toc/.test(k.attrs.name)); if (m) name = m.attrs.name; });
+    if (!name) {
+      name = `_Toc${Date.now().toString(36)}${n++}`;
+      if (tr) tr.addMark(hd.pos + 1, hd.pos + hd.node.nodeSize - 1, schema.marks.bookmark.create({ name }));
+    }
+    const page = pageOfPos(view, hd.pos + 1);
+    const link = word ? [{ type: 'link', attrs: { href: `#${name}` } }] : [];
+    return {
+      type: 'paragraph',
+      attrs: { ...defaultParaAttrs(), leftIndent: (hd.level - 1) * 11, spaceBelow: hd.level === 1 ? 4 : 2, tabSet: `${Math.round(width * 100) / 100}:1:${word ? 1 : 0}`, toc: { level: hd.level } },
+      content: [{ type: 'text', text: `${hd.label}\t${page}`, ...(link.length ? { marks: link } : {}) }],
+    };
+  });
+}
+
+/** Word documents: headings egUDF recognised get Word's outline level, so Word's own TOC and navigation see them too. */
+function markOutline(tab, tr) {
+  if (tab.format !== 'docx') return;
+  for (const hd of docHeadings(tab)) {
+    if (hd.node.attrs.outline != null || tab.meta.docxStyles?.[hd.node.attrs.styleId]?.outline != null) continue;
+    tr.setNodeMarkup(tr.mapping.map(hd.pos), undefined, { ...hd.node.attrs, outline: hd.level - 1 });
+  }
+}
+
+function insertToc(tab) {
+  if (!tab) return;
+  const ed = tab.editor;
+  if (!docHeadings(tab).length) { toast('Belgede başlık bulunamadı. Başlıkları kalın büyük harfle ya da Word başlık stiliyle yazın.', { type: 'warn', ms: 5000 }); return; }
+  const tr = ed.state.tr;
+  markOutline(tab, tr);
+  const entries = tocBlocks(tab, tr);
+  const at = ed.state.selection.$from.before(1);
+  const title = { type: 'paragraph', attrs: { ...defaultParaAttrs(), align: 'center', spaceBelow: 12, toc: { level: 0 } }, content: [{ type: 'text', text: 'İÇİNDEKİLER', marks: [{ type: 'bold' }] }] };
+  tr.insert(at, [title, ...entries].map((b) => ed.schema.nodeFromJSON(b)));
+  ed.view.dispatch(tr);
+  // the TOC itself moves the text: number again once the pages settle
+  setTimeout(() => updateToc(tab, { quiet: true }), 600);
+}
+
+function updateToc(tab, { quiet = false } = {}) {
+  if (!tab) return false;
+  const ed = tab.editor;
+  const ranges = [];
+  ed.state.doc.forEach((node, off) => { if (node.attrs?.toc && node.attrs.toc.level > 0) ranges.push([off, off + node.nodeSize]); });
+  if (!ranges.length) { if (!quiet) toast('Belgede içindekiler tablosu yok (Ekle → İçindekiler).', { type: 'warn' }); return false; }
+  const tr = ed.state.tr;
+  const entries = tocBlocks(tab, tr).map((b) => ed.schema.nodeFromJSON(b));
+  const from = tr.mapping.map(ranges[0][0]), to = tr.mapping.map(ranges[ranges.length - 1][1]);
+  tr.replaceWith(from, to, entries);
+  ed.view.dispatch(tr);
+  if (!quiet) toast('İçindekiler güncellendi.', { type: 'ok', ms: 1600 });
+  return true;
+}
+app.updateToc = updateToc;
+
 function refreshNav() {
   const list = $('#nav-list');
   const ed = app.ed();
@@ -1717,27 +1816,7 @@ function refreshNav() {
   const items = [];
   const doc = ed.state.doc;
   if (navMode === 'headings') {
-    doc.descendants((node, pos) => {
-      if (node.type.name === 'table') return false;
-      if (node.type.name !== 'paragraph' || !node.content.size) return node.type.name !== 'paragraph';
-      // Word headings: the style's outline level, as Word's navigation pane
-      const ol = app.active?.meta.docxStyles?.[node.attrs.styleId]?.outline;
-      if (ol != null) { const label = node.textContent.trim().slice(0, 110); if (label) items.push({ label, pos, cls: ol === 0 ? 'l1' : 'l2' }); return false; }
-      const first = node.firstChild;
-      const bold = first?.marks.some((m) => m.type.name === 'bold');
-      if (!bold) return false;
-      // bold prefix (until the first non-bold run)
-      let label = '';
-      node.forEach((c) => { if (label !== null && c.isText && c.marks.some((m) => m.type.name === 'bold')) label += c.text; else if (label) label = label === '' ? '' : label; });
-      label = label.split(/\t|:/)[0].trim();
-      if (label.length < 3 || label.length > 110) return false;
-      const letters = label.replace(/[^A-Za-zÇĞİÖŞÜçğıöşü]/g, '');
-      const upper = letters && letters === letters.toLocaleUpperCase('tr');
-      const centered = node.attrs.align === 'center';
-      if (!upper && !centered && !/^([IVX]+|[A-ZÇĞİÖŞÜ]|\d+)[.)-]\s/.test(label)) return false;
-      items.push({ label, pos, cls: centered ? 'l1' : (/^[A-ZÇĞİÖŞÜ]\)|^\d/.test(label) ? 'l2' : 'l1') });
-      return false;
-    });
+    for (const hd of docHeadings(app.active)) items.push({ label: hd.label, pos: hd.pos, cls: hd.level === 1 ? 'l1' : 'l2' });
   } else if (navMode === 'fill') {
     doc.descendants((node, pos) => {
       if (!node.isTextblock) return true;
@@ -2056,7 +2135,7 @@ function smokeWordReview() {
 for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => document.body.classList.toggle('ctrl-down', e.ctrlKey || e.metaKey));
 
 window.__smoke = {
-  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
+  steps: () => (window.__pgDebugOnly ? ['long', 'debug', 'format', 'debug'] : ['start', 'opened', 'scroll-mid', 'template', 'long', 'format', 'roundtrip', 'pdf', 'signdialog', 'real', 'real-scroll', 'table', 'tabletools', 'autocorrect', 'docx', 'docx-save', 'toc', 'headerrows', 'wordpdf', 'tableprops', 'worddialogs', 'bookmarks', 'htmlpaste', 'footnotes', 'docx-keep', 'docx-to-udf', 'docx-header', 'wordpaste', 'ruler', 'recovery', 'pagenum', 'hfdialog', 'spelling', 'spelling-ui', 'collab', 'collab-off', 'compare', 'track', 'fmttrack', 'find', 'comments', 'comment-signed', 'comfort', 'ctxmenu', 'dark', 'theme-restore', 'ui-insert', 'ui-layout', 'ui-review', 'ui-sign', 'ui-uyap', 'ui-view', 'backstage', 'welcome']),
   async run(step, out) {
     const sep = out.includes('\\') ? '\\' : '/';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2199,6 +2278,33 @@ window.__smoke = {
         const json = JSON.stringify(back.doc);
         return { ok: dirty && !t.dirty && t.format === 'docx' && t.path === p && /Eklendi\./.test(txt) && back.review.comments.length === 1 && back.review.comments[0].replies.length === 1 && json.includes('"insertion"') && json.includes('"deletion"') && json.includes('"list"'),
           comments: back.review.comments.length, replies: back.review.comments[0]?.replies.length };
+      }
+      case 'toc': { // table of contents from the headings, page numbers right, links to the headings
+        const P = (text, bold) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text, ...(bold ? { marks: [{ type: 'bold' }] } : {}) }] });
+        const content = [P('Giriş paragrafı.')];
+        const titles = ['I. TARAFLAR', 'II. OLAYLAR', 'III. HUKUKİ NEDENLER', 'IV. DELİLLER', 'V. SONUÇ VE İSTEM'];
+        for (const ti of titles) { content.push(P(ti, true)); for (let i = 0; i < 14; i++) content.push(P('Açıklama paragrafı, sayfaları doldurmak için yeterince uzun bir cümle yazılmıştır burada. '.repeat(2))); }
+        const pth = `${out}${sep}toc.docx`;
+        await native.writeFile(pth, exportDocx({ type: 'doc', content }, smokeWordMeta()));
+        const t = await openPath(pth);
+        await wait(900);
+        t.editor.commands.setTextSelection(1);
+        runCmd('insertToc');
+        await wait(1800);
+        const v = t.editor.view;
+        const entries = [];
+        v.state.doc.forEach((n) => { if (n.attrs.toc?.level > 0) entries.push(n); });
+        const heads = docHeadings(t);
+        const pagesOk = entries.length === titles.length && entries.every((e, i) => {
+          const [label, num] = e.textContent.split('\t');
+          return label === titles[i] && Number(num) === pageOfPos(v, heads[i].pos + 1);
+        });
+        const linksOk = entries.every((e) => { const href = e.firstChild.marks.find((m) => m.type.name === 'link')?.attrs.href; return href && findBookmark(v.state.doc, href.slice(1)) != null; });
+        const outDocx = exportDocx(t.editor.getJSON(), t.meta);
+        await native.writeFile(`${out}${sep}toc-out.docx`, outDocx);
+        const xml = new TextDecoder().decode(unzipSync(outDocx)['word/document.xml']);
+        const field = (xml.match(/TOC \\o/g) || []).length === 1 && (xml.match(/fldCharType="end"/g) || []).length >= 1;
+        return { ok: pagesOk && linksOk && field && t.pages >= 3, entries: entries.map((e) => e.textContent), pagesOk, linksOk, field, pages: t.pages };
       }
       case 'headerrows': { // Word tables: header rows repeat at the top of every page the table continues on
         const P = (text) => ({ type: 'paragraph', attrs: defaultParaAttrs(), content: [{ type: 'text', text }] });

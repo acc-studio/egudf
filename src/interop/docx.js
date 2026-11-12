@@ -222,6 +222,7 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     const jc = { center: 'center', right: 'right', justify: 'both' }[a.align];
     if (jc) s += `<w:jc w:val="${jc}"/>`;
     else if (styled) s += '<w:jc w:val="left"/>'; // the style may center it
+    if (a.outline != null) s += `<w:outlineLvl w:val="${a.outline}"/>`;
     // paragraph mark font (what an empty paragraph's height comes from)
     if (a.strut?.size || a.strut?.family) s += `<w:rPr>${a.strut.family ? `<w:rFonts w:ascii="${x(a.strut.family)}" w:hAnsi="${x(a.strut.family)}" w:cs="${x(a.strut.family)}"/>` : ''}${a.strut.size ? `<w:sz w:val="${Math.round(a.strut.size * 2)}"/><w:szCs w:val="${Math.round(a.strut.size * 2)}"/>` : ''}</w:rPr>`;
     void inCell;
@@ -254,7 +255,10 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
       else if (ins) body += `<w:ins ${revAttrs(ins)}>${wrap(textRuns(c.text, marks))}</w:ins>`;
       else body += wrap(textRuns(c.text, marks, false, fc));
     }
-    return `<w:p>${pPr(a, opts)}${body}</w:p>`;
+    const fld = opts?.tocField || {};
+    const begin = fld.first ? '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>' : '';
+    const end = fld.last ? '<w:r><w:fldChar w:fldCharType="end"/></w:r>' : '';
+    return `<w:p>${pPr(a, opts)}${begin}${body}${end}</w:p>`;
   }
 
   function table(n, widthTw) {
@@ -315,7 +319,13 @@ export function exportDocx(doc, meta = newDocMeta(), review = null) {
     let s = '';
     let last = '';
     for (const n of list) {
-      if (n.type === 'paragraph') { s += paragraph(n); last = 'p'; } else if (n.type === 'table') { s += table(n, widthTw); last = 't'; }
+      if (n.type === 'paragraph') {
+        // consecutive TOC entries form one Word TOC field
+        const isToc = (b) => b?.type === 'paragraph' && b.attrs?.toc?.level > 0;
+        const i = isToc(n) ? list.indexOf(n) : -1;
+        s += paragraph(n, i >= 0 ? { tocField: { first: !isToc(list[i - 1]), last: !isToc(list[i + 1]) } } : undefined);
+        last = 'p';
+      } else if (n.type === 'table') { s += table(n, widthTw); last = 't'; }
     }
     if (last === 't' && inCell) s += '<w:p/>'; // Word requires a paragraph after a table in a cell
     return s;
@@ -652,6 +662,7 @@ export function importDocx(bytes, opts = {}) {
           case 'pageBreakBefore': o.pageBreakBefore = on(c); break;
           case 'keepNext': o.keepNext = on(c); break;
           case 'keepLines': o.keepLines = on(c); break;
+          case 'outlineLvl': { const v = parseInt(wa(c, 'val'), 10); o.outline = v >= 0 && v < 9 ? v : null; break; }
           case 'widowControl': o.widowControl = on(c); break;
           case 'pBdr': { const b = Object.fromEntries(Object.entries(readBorders(c) || {}).filter(([k, v]) => v !== 'none' && ['top', 'bottom', 'left', 'right'].includes(k))); o.border = Object.keys(b).length ? b : null; break; }
           case 'shd': { const v = wa(c, 'fill'); o.shading = v && v !== 'auto' && !/^f{6}$/i.test(v) ? `#${v.toLowerCase()}` : null; break; }
@@ -825,6 +836,8 @@ export function importDocx(bytes, opts = {}) {
     if (pp.pageBreakBefore) attrs.pageBreakBefore = true;
     if (pp.keepNext) attrs.keepNext = true;
     if (pp.keepLines) attrs.keepLines = true;
+    // only a level set on the paragraph itself (a style's level lives with the style)
+    if (ppr && kid(ppr, 'outlineLvl')) { const v = parseInt(wa(kid(ppr, 'outlineLvl'), 'val'), 10); if (v >= 0 && v < 9) attrs.outline = v; }
     if (pp.widowControl === false) attrs.widowControl = false;
     if (pp.border) attrs.border = pp.border;
     if (pp.shading) attrs.shading = pp.shading;

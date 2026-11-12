@@ -746,3 +746,25 @@ it.
 - **Testing:** new smoke step `headerrows`: a 70-row table over 2 pages has
   exactly one repeated header per continuation page, placed above that page's
   first row, and the header isn't duplicated in the document.
+
+## 0.26.0: Table of contents (iteration 25)
+
+- **Ekle → İçindekiler:** a table of contents built from the document's
+  headings.
+  - Entries have dot leaders and right-aligned page numbers, indented by
+    level. The numbers are recalculated once the contents itself has moved
+    the text.
+  - Headings are Word's heading styles where the document has them;
+    otherwise egUDF recognises headings as petitions write them (bold capitals,
+    "I. TARAFLAR", "A) …", centered titles), as in the navigation pane.
+  - Each entry links to its heading (Ctrl+click).
+  - **Güncelle** refreshes it after edits.
+- **In Word:** the contents is a real Word table-of-contents field, and
+  egUDF gives the headings Word's outline levels. Checked in Word: it sees the
+  contents and its own "Update table" rebuilds it with the same entries.
+- **In a .udf:** UYAP has no links or dot leaders, so entries show the heading
+  and a right-aligned page number. Page numbers follow egUDF's page layout,
+  which can differ slightly from UYAP's own page breaks.
+- **Testing:** new smoke step `toc` covers 5 headings over 3 pages: each page
+  number matches where its heading lands, every link reaches its heading, and
+  the saved .docx contains one TOC field.

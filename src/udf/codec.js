@@ -138,6 +138,10 @@ export function defaultParaAttrs() {
     strut: null,
     // Word paragraph style id (Heading 1…), kept so Word still sees headings (navigation, TOC)
     styleId: null,
+    // a table-of-contents entry egUDF generated ({ level }); Word: inside a TOC field
+    toc: null,
+    // Word paragraph outline level (0 = heading 1): Word's navigation pane and TOC field use it
+    outline: null,
   };
 }
 
