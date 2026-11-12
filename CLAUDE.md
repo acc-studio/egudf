@@ -35,6 +35,12 @@ To add smoke coverage, add a step to `window.__smoke` in `src/renderer.js`. `--p
     - Cell backgrounds and row `height` are ignored.
   - Horizontal merge: a row with fewer cells plus its own `columnSpans`. There are no vertical merges.
   - The format has no page breaks; UYAP drops `<page-break/>`.
+  - **Tab stops** (Swing): TabSet positions count from LeftIndent, not the margin (negative stops reach into a hanging first line). With no TabSet there is a stop every 72pt from LeftIndent; past the last stop a tab is only 5pt, and default stops do not resume. Justified paragraphs behave like left-aligned ones.
+    - The model keeps Word's margin-based positions: the codec adds LeftIndent on read and subtracts it on write (`shiftTabSet`).
+    - The editor (`nextStop(…, uyap)`) and `pdf.js` follow UYAP's rules for .udf.
+    - uyapify writes out Word's implicit hanging-indent stop and its default stops.
+  - **Fonts:** UYAP's Java draws Georgia and Palatino Linotype in italic, so uyapify maps them (and cloud serifs like Lora) to Cambria. Office cloud fonts are not installed for Java; `FONT_FALLBACK` picks a Windows font of similar width.
+  - **Word "multiple" spacing** scales the font's own line height (hhea, `src/fontmetrics.js`; Lora 1.28). uyapify converts it to UYAP's nearest 2pt step. The HVK AoA test document matches Word's 23 pages.
   - **Line pitch** (measured, 8 cases; smoke `udfpitch`):
     - h = ceil(size × 1.15) whole points, plus 2 × floor(LineSpacing × h / 2): half the spacing above the text, half below. Example: 12pt Times gives 14 / 20 / 28pt at single / 1.5 / double.
     - Table rows have no vertical cell padding.

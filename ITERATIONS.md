@@ -850,6 +850,29 @@ tables; headings with spacing. Word documents keep Word's rules.
   and outline level, the navigation pane, the saved Word style, and the .udf
   gallery coming back.
 
+## 0.33.0: Word documents as .udf look like Word in UYAP (iteration 32)
+
+Checked against a heavily styled deed of amendment in Word and in the
+official Doküman Editörü:
+
+- **No more gap after list numbers and dashes:**
+  - UYAP measures tab stops from the paragraph's indent, not from the margin.
+    A Word "-⇥text" or "1.⇥text" paragraph with a hanging indent therefore
+    pushed its text a whole indent too far right.
+  - egUDF now writes tab stops the way UYAP reads them. It also reads them
+    that way, so UYAP files with indented tabs show as they do in UYAP.
+  - When a Word document becomes a .udf, Word's invisible tab stops (at the
+    hanging indent, and the defaults after the last stop) are written out,
+    because UYAP has neither.
+- **Fonts:**
+  - Office's downloadable fonts (Lora, Lato, Open Sans, Montserrat…) are not
+    there for UYAP. They now become the Windows font closest in width.
+  - Serif fonts go to Cambria, because UYAP draws Georgia and Palatino in
+    italic.
+- **Line spacing:** Word's "1.33 lines" scales each font's own line height;
+  UYAP's does not. The converter now picks UYAP's nearest spacing from the
+  real font. The deed is 23 pages in UYAP, as in Word (it was 25).
+
 ## 0.32.0: Automatic updates, tidier header, quick conversions (iteration 31)
 
 - **Automatic updates:**

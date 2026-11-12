@@ -21,7 +21,7 @@
 // resolution order. Field runs (<field fieldName…>) and unknown attributes are
 // carried through so UYAP form templates keep working.
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { ALIGN, IMAGE_CHAR, PT_TO_PX, javaToHex, hexToJava, jfloat, num, imageMime, uyapLevelType, uyapListType } from './common.js';
+import { ALIGN, IMAGE_CHAR, PT_TO_PX, javaToHex, hexToJava, jfloat, num, imageMime, uyapLevelType, uyapListType, shiftTabSet } from './common.js';
 import { flattenFootnotes } from './uyapify.js';
 
 const CHAR_KEYS = new Set(['family', 'size', 'bold', 'italic', 'underline', 'strikethrough', 'foreground', 'background', 'subscript', 'superscript']);
@@ -159,7 +159,7 @@ function paraAttrsFrom(eff, own) {
   const a = defaultParaAttrs();
   a.align = ALIGN[parseInt(eff.Alignment || '0', 10)] || 'left';
   for (const [k, n] of PARA_NUM) a[n] = num(eff[k]);
-  a.tabSet = eff.TabSet || null;
+  a.tabSet = shiftTabSet(eff.TabSet, a.leftIndent);
   if (eff.Numbered === 'true' || eff.Bulleted === 'true') {
     const numbered = eff.Numbered === 'true';
     const kind = numbered ? 'number' : 'bullet';
@@ -398,7 +398,7 @@ function paraXmlAttrs(a = {}) {
   // the first word. Without the hanging part UYAP shows Word's layout: label in the
   // margin, every line of text at LeftIndent. (Verified in Doküman Editörü 5.4.20.)
   if (a.list && (a.firstLineIndent || 0) < 0) delete o.FirstLineIndent;
-  if (a.tabSet) o.TabSet = a.tabSet;
+  if (a.tabSet) o.TabSet = shiftTabSet(a.tabSet, -(a.leftIndent || 0));
   if (a.list) {
     // only names UYAP knows, and the level's style spelled out (UYAP otherwise uses its own per-level default)
     const type = uyapListType(a.list.kind, a.list.type);

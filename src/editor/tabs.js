@@ -24,9 +24,21 @@ export function parseTabSet(tabSet) {
   }).filter((s) => Number.isFinite(s.pos) && s.pos > 0).sort((a, b) => a.pos - b.pos);
 }
 
-/** The stop a tab starting at x (pt from the column's left edge) moves to. */
-export function nextStop(x, attrs, defaultTab = 35.4) {
+/**
+ * The stop a tab starting at x (pt from the column's left edge) moves to.
+ * uyap: how Doküman Editörü (Swing) does it — no implicit stop at a hanging
+ * indent; without stops a default every 72pt counted from LeftIndent; after
+ * the last stop only 5pt (no defaults resume).
+ */
+export function nextStop(x, attrs, defaultTab = 35.4, uyap = false) {
   const stops = parseTabSet(attrs?.tabSet);
+  if (uyap) {
+    const left = attrs?.leftIndent || 0;
+    const custom = stops.find((s) => s.pos > x + 0.01);
+    if (custom) return custom;
+    if (stops.length) return { pos: x + 5, align: 0, leader: 0 };
+    return { pos: left + (Math.trunc((x - left) / 72) + 1) * 72, align: 0, leader: 0 };
+  }
   if ((attrs?.firstLineIndent || 0) < 0 && attrs?.leftIndent > 0) stops.push({ pos: attrs.leftIndent, align: 0, leader: 0, implicit: true });
   stops.sort((a, b) => a.pos - b.pos);
   const custom = stops.find((s) => s.pos > x + 0.5);
@@ -56,7 +68,7 @@ export const tabsKey = new PluginKey('tabStops');
 
 export const TabStops = Extension.create({
   name: 'tabStops',
-  addOptions() { return { defaultTab: () => 35.4 }; },
+  addOptions() { return { defaultTab: () => 35.4, uyap: () => false }; },
   addProseMirrorPlugins() {
     const opts = this.options;
     return [new Plugin({
@@ -76,7 +88,7 @@ export const TabStops = Extension.create({
         const run = () => {
           if (!view.dom.isConnected || !view.dom.offsetParent) return;
           const cur = tabsKey.getState(view.state);
-          const res = measure(view, cur.widths, opts.defaultTab());
+          const res = measure(view, cur.widths, opts.defaultTab(), opts.uyap());
           if (!res) return;
           const changed = Object.keys(res.widths).length !== Object.keys(cur.widths).length
             || Object.entries(res.widths).some(([k, w]) => Math.abs((cur.widths[k]?.w ?? -9) - w.w) > 0.5 || cur.widths[k]?.cls !== w.cls);
@@ -98,7 +110,7 @@ export const TabStops = Extension.create({
   },
 });
 
-function measure(view, current, defaultTab) {
+function measure(view, current, defaultTab, uyap) {
   const widths = {};
   let any = false;
   view.state.doc.descendants((node, pos) => {
@@ -129,7 +141,7 @@ function measure(view, current, defaultTab) {
       const sameLine = Math.abs(c.top - b.top) < 2;
       const seg = sameLine ? Math.max(0, (c.left - b.left) / scale) : 0;
       let dec = null;
-      const stop = nextStop(x0 / PX, node.attrs, defaultTab);
+      const stop = nextStop(x0 / PX, node.attrs, defaultTab, uyap);
       if (stop.align === 4 && sameLine) {
         const txt = view.state.doc.textBetween(tp + 1, segEnd);
         const m = /[.,]/.exec(txt);
@@ -151,7 +163,7 @@ function measure(view, current, defaultTab) {
  * Lays out tabs inside rendered paragraphs (header/footer overlay). `root` must
  * be in the document. Paragraph attrs come from data-p (see UdfParagraph).
  */
-export function layoutTabsDom(root, defaultTab = 35.4) {
+export function layoutTabsDom(root, defaultTab = 35.4, uyap = false) {
   for (const p of root.querySelectorAll('p')) {
     if (!p.textContent.includes('\t')) continue;
     let attrs = {};
@@ -181,7 +193,7 @@ export function layoutTabsDom(root, defaultTab = 35.4) {
       const sameLine = rects.length && rects.every((r) => Math.abs(r.top - rects[0].top) < 2);
       const seg = sameLine ? (Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left))) / scale : 0;
       const x = (s0.left - pr.left) / scale;
-      const stop = nextStop(x / PX, attrs, defaultTab);
+      const stop = nextStop(x / PX, attrs, defaultTab, uyap);
       sp.className = `tab-stop${leaderClass(stop)}`;
       sp.style.width = `${tabWidth(x, stop, seg, null).toFixed(2)}px`; // synchronous: the next span measures after this one
     });

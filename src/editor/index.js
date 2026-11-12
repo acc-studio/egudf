@@ -76,7 +76,7 @@ function UdfTableHeader() { return TableHeader; }
  * onPaste(event) → true when it handled the paste itself
  * defaultTab() → default tab stop interval in pt
  */
-export function createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection, onPaste, defaultTab, paginate = true }) {
+export function createEditor({ element, content, getLayout, onLayout, onUpdate, onSelection, onPaste, defaultTab, uyapTabs, paginate = true }) {
   const editor = new Editor({
     element,
     content,
@@ -88,7 +88,7 @@ export function createEditor({ element, content, getLayout, onLayout, onUpdate, 
       AutoCorrect,
       Spell,
       CollabPeers,
-      TabStops.configure({ defaultTab: defaultTab || (() => 36) }),
+      TabStops.configure({ defaultTab: defaultTab || (() => 36), uyap: uyapTabs || (() => false) }),
       FootnoteNumbers,
       ...(paginate ? [Pagination.configure({ getLayout, onLayout })] : []),
     ],

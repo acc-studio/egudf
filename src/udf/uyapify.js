@@ -12,17 +12,27 @@
 //    and tab leaders are not in the format (UYAP drops a <page-break/>, draws no leaders);
 //  - tables: one border mode per table (grid / rows / frame / none) — UYAP has no
 //    per-side cell borders, cell shading, row heights or vertical alignment;
-//  - fonts only Office has (Aptos…) → installed equivalents (UYAP is a Java app).
+//  - fonts only Office has (Aptos, Lora…) → installed equivalents of similar width (UYAP is a Java app;
+//    it draws Georgia and Palatino Linotype in italic, so serif text goes to Cambria);
+//  - tab stops: Word's implicit hanging and default stops spelled out (UYAP has neither);
+//  - line pitch from the font's own line height (Word) to UYAP's 1.15 × size steps.
 // The result is the editor's JSON; the codec serializes it as usual.
 import { uyapListType } from './common.js';
 import { defaultParaAttrs } from './codec.js';
+import { lineFactor } from '../fontmetrics.js';
 
 /** Office cloud fonts (not installed in Windows) → the nearest installed font. */
 const FONT_FALLBACK = {
   aptos: 'Calibri', 'aptos display': 'Calibri Light', 'aptos narrow': 'Arial Narrow', 'aptos serif': 'Cambria', 'aptos mono': 'Consolas',
   grandview: 'Calibri', 'grandview display': 'Calibri Light', seaford: 'Calibri', 'seaford display': 'Calibri', tenorite: 'Calibri', 'tenorite display': 'Calibri',
   bierstadt: 'Arial', 'bierstadt display': 'Arial', skeena: 'Calibri', 'skeena display': 'Calibri', 'amasis mt pro': 'Cambria', 'avenir next lt pro': 'Century Gothic',
-  'gill sans nova': 'Gill Sans MT', 'arial nova': 'Arial', 'georgia pro': 'Georgia', 'verdana pro': 'Verdana', 'segoe ui variable': 'Segoe UI',
+  'gill sans nova': 'Gill Sans MT', 'arial nova': 'Arial', 'georgia pro': 'Cambria', 'verdana pro': 'Verdana', 'segoe ui variable': 'Segoe UI',
+  // Google fonts Office downloads on demand: the Windows font closest in width (line breaks), same kind
+  // UYAP's Java draws Georgia and Palatino Linotype in italic: serif text goes to Cambria (Windows, upright, lining figures)
+  georgia: 'Cambria', 'palatino linotype': 'Cambria', lora: 'Cambria', 'pt serif': 'Cambria', 'walbaum display': 'Cambria',
+  lato: 'Arial', 'ibm plex sans': 'Arial', questrial: 'Arial', univers: 'Arial', 'neue haas grotesk text pro': 'Arial',
+  'open sans': 'Trebuchet MS', 'noto sans': 'Trebuchet MS', 'nunito sans': 'Trebuchet MS', ubuntu: 'Trebuchet MS', 'josefin sans': 'Trebuchet MS',
+  montserrat: 'Verdana', 'work sans': 'Verdana', poppins: 'Verdana', roboto: 'Calibri', 'source sans pro': 'Calibri',
 };
 export const uyapFont = (family) => {
   const f = String(family || '').split(',')[0].replace(/["']/g, '').trim();
@@ -33,7 +43,7 @@ const SINGLE = 1.15; // UYAP's single line, as the UDF→PDF engine uses
 
 /** opts.base: { family, size } of the target document */
 export function uyapifyBlocks(blocks, opts = {}) {
-  const base = opts.base || { family: 'Times New Roman', size: 12 };
+  const base = { family: 'Times New Roman', size: 12, ...(opts.base || {}), defaultTab: opts.defaultTab || 35.4 };
   let prevBelow = 0;
   return (blocks || []).map((b) => {
     if (b.type === 'table') { prevBelow = 0; return table(b, opts); }
@@ -52,12 +62,8 @@ function paragraph(n, base, prevBelow) {
   }
   // Word: max(previous after, this before); UYAP adds them
   if (a.spaceAbove) a.spaceAbove = Math.max(0, Math.round((a.spaceAbove - prevBelow) * 100) / 100);
-  if ((a.lineRule === 'exact' || a.lineRule === 'atLeast') && a.lineHeight) {
-    const size = a.strut?.size || largestRun(n) || base.size;
-    const mult = a.lineHeight / (size * SINGLE) - 1;
-    a.lineSpacing = Math.max(0, Math.round((a.lineRule === 'atLeast' ? Math.max(0, mult) : mult) * 100) / 100);
-  }
-  if (a.tabSet) a.tabSet = String(a.tabSet).split(',').map((t) => { const [p, al] = t.split(':'); return `${p}:${al || 0}:0`; }).join(',');
+  a.lineSpacing = uyapLineSpacing(n, a, base);
+  a.tabSet = wordTabs(n, a, base.defaultTab);
   const shade = a.shading;
   Object.assign(a, { lineRule: null, lineHeight: null, pageBreakBefore: false, keepNext: false, keepLines: false, widowControl: true, border: null, shading: null });
   if (a.strut?.family) a.strut = { ...a.strut, family: uyapFont(a.strut.family) };
@@ -65,14 +71,47 @@ function paragraph(n, base, prevBelow) {
   return { ...n, attrs: a, ...(n.content ? { content } : {}) };
 }
 
-function largestRun(n) {
-  let m = 0;
+/**
+ * Word's line pitch as UYAP's LineSpacing. Word: the font's own line height
+ * (fontmetrics.js) × the multiple, or the exact / at-least height. UYAP: h =
+ * ceil(1.15 × size) + 2 × floor(LineSpacing × h / 2) — whole points, in steps
+ * of 2; the nearest step wins.
+ */
+function uyapLineSpacing(n, a, base) {
+  let size = 0, natural = 0;
   for (const c of n.content || []) {
-    const fs = c.marks?.find((k) => k.type === 'textStyle')?.attrs?.fontSize;
-    if (fs) m = Math.max(m, parseFloat(fs));
+    if (c.type !== 'text') continue;
+    const ts = c.marks?.find((k) => k.type === 'textStyle')?.attrs;
+    const s = parseFloat(ts?.fontSize) || a.strut?.size || base.size;
+    size = Math.max(size, s);
+    natural = Math.max(natural, s * lineFactor(ts?.fontFamily || a.strut?.family || base.family));
   }
-  return m || null;
+  if (!size) { size = a.strut?.size || base.size; natural = size * lineFactor(a.strut?.family || base.family); }
+  const h = Math.ceil(size * SINGLE - 1e-9);
+  let target = natural * (1 + (a.lineSpacing || 0));
+  if (a.lineRule === 'exact' && a.lineHeight) target = a.lineHeight;
+  else if (a.lineRule === 'atLeast' && a.lineHeight) target = Math.max(a.lineHeight, natural);
+  const half = Math.max(0, Math.round((target - h) / 2 - 1e-9));
+  return half ? Math.round(((2 * half + 0.5) / h) * 1000) / 1000 : 0;
 }
+
+/**
+ * Word's tab stops as UYAP needs them spelled out (only in paragraphs with tabs):
+ * the implicit stop at a hanging indent, and the default stops past the last
+ * custom one — UYAP has neither (after its last stop a tab is 5pt). No leaders.
+ */
+function wordTabs(n, a, defaultTab) {
+  const stops = String(a.tabSet || '').split(',').map((t) => { const [p, al] = t.split(':'); return { pos: parseFloat(p), al: parseInt(al, 10) || 0 }; }).filter((s) => Number.isFinite(s.pos));
+  const hasTab = (n.content || []).some((c) => c.type === 'text' && c.text.includes('\t'));
+  if (hasTab) {
+    if (!a.list && (a.firstLineIndent || 0) < 0 && a.leftIndent > 0 && !stops.some((s) => Math.abs(s.pos - a.leftIndent) < 0.5)) stops.push({ pos: a.leftIndent, al: 0 });
+    const last = Math.max(0, ...stops.map((s) => s.pos));
+    for (let k = 1; k * defaultTab <= TAB_END; k++) if (k * defaultTab > last + 0.5) stops.push({ pos: Math.round(k * defaultTab * 100) / 100, al: 0 });
+  }
+  if (!stops.length) return null;
+  return stops.sort((x, y) => x.pos - y.pos).map((s) => `${s.pos}:${s.al}:0`).join(',');
+}
+const TAB_END = 560; // pt: past any text column
 
 function run(c, shade, base) {
   if (c.type === 'image' && c.attrs?.wrap) return { ...c, attrs: { ...c.attrs, wrap: null } }; // UYAP: inline pictures only
@@ -150,7 +189,7 @@ export function flattenFootnotes(blocks) {
 
 /** A whole document + meta (header/footer) → .udf-representable. Returns { doc, meta }. */
 export function uyapifyDoc(doc, meta) {
-  const opts = { base: meta?.base };
+  const opts = { base: meta?.base, defaultTab: meta?.defaultTab };
   const m = { ...meta };
   if (m.base?.family) m.base = { ...m.base, family: uyapFont(m.base.family) };
   for (const k of ['header', 'footer']) if (m[k]) m[k] = { ...m[k], content: uyapifyBlocks(m[k].content, opts) };

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { uyapifyBlocks, uyapifyDoc, uyapFont } from '../src/udf/uyapify.js';
 import { serializeUdfXml, parseUdfXml, newDocMeta, defaultParaAttrs } from '../src/udf/codec.js';
 
+const pitch = (size, ls) => { const h = Math.ceil(size * 1.15); return h + 2 * Math.floor(ls * h / 2); };
 const P = (attrs, content = [{ type: 'text', text: 'x' }]) => ({ type: 'paragraph', attrs: { ...defaultParaAttrs(), ...attrs }, content });
 
 test('paragraph spacing: Word takes the larger of after/before, UYAP adds them', () => {
@@ -23,7 +24,7 @@ test('lists, line spacing, Word-only paragraph properties', () => {
   assert.equal(a.attrs.border, null);
   assert.equal(a.attrs.pageBreakBefore, false); // the .udf format has no page breaks
   assert.equal(b.attrs.lineRule, null);
-  assert.equal(b.attrs.lineSpacing, 1); // 27.6pt = 2 × 12pt × 1.15
+  assert.equal(pitch(12, b.attrs.lineSpacing), 28); // 27.6pt exact → UYAP's nearest whole-step pitch
 });
 
 test('character effects UYAP lacks become text it has', () => {
@@ -90,4 +91,24 @@ test('footnotes: superscript numbers in the text, the notes at the end (UYAP has
   const text = back.map((p) => (p.content || []).map((c) => c.text).join(''));
   assert.deepEqual(text, ['Madde1 ve2', 'Dipnotlar', '1 TBK m. 1', '2 HMK m. 2']);
   assert.ok(back[0].content.find((c) => c.text === '1').marks.some((m) => m.type === 'superscript'));
+});
+
+test('line pitch: Word multiples scale the font’s own line height', () => {
+  const run = (family, size) => [{ type: 'text', text: 'x', marks: [{ type: 'textStyle', attrs: { fontFamily: family, fontSize: size + 'pt' } }] }];
+  const [lora, times, times15] = uyapifyBlocks([P({ lineSpacing: 0.33 }, run('Lora', 10)), P({}, run('Times New Roman', 12)), P({ lineSpacing: 0.5 }, run('Times New Roman', 12))]);
+  assert.equal(pitch(10, lora.attrs.lineSpacing), 18); // Word: 10 × 1.28 × 1.33 = 17.0pt
+  assert.equal(times.attrs.lineSpacing, 0);
+  assert.equal(pitch(12, times15.attrs.lineSpacing), 20);
+  assert.equal(lora.content[0].marks[0].attrs.fontFamily, 'Cambria');
+});
+
+test('tab stops: UYAP counts from LeftIndent; Word’s implicit and default stops spelled out', () => {
+  const [p] = uyapifyBlocks([P({ leftIndent: 21.25, firstLineIndent: -21.25 }, [{ type: 'text', text: '-\tthe general meeting' }])], { defaultTab: 36 });
+  assert.match(p.attrs.tabSet, /^21\.25:0:0,36:0:0,72:0:0/); // hanging stop, then defaults
+  const xml = serializeUdfXml({ type: 'doc', content: [p] }, newDocMeta());
+  assert.match(xml, /TabSet="0:0:0,14\.75:0:0,50\.75:0:0/); // relative to LeftIndent
+  const back = parseUdfXml(xml).doc.content[0];
+  assert.equal(back.attrs.tabSet.split(',')[0], '21.25:0:0');
+  const [plain] = uyapifyBlocks([P({ tabSet: '100:0:0' })]); // no tab in the text: stops untouched
+  assert.equal(plain.attrs.tabSet, '100:0:0');
 });

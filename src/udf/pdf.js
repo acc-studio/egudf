@@ -200,7 +200,10 @@ export async function udfXmlToPdf(xmlString, loadFont, { title } = {}) {
     for (const t of tokens) {
       if (t.kind === 'tab') {
         const at = line.indent + line.x;
-        const stop = tabStops.find((s) => s > at + 0.5) ?? (Math.floor(at / 36) + 1) * 36;
+        // UYAP (Swing): stops count from LeftIndent; no stops → every 72pt; past the last stop → 5pt
+        const rel = at - left;
+        const next = tabStops.find((s) => s > rel + 0.01);
+        const stop = left + (next ?? (tabStops.length ? rel + 5 : (Math.trunc(rel / 72) + 1) * 72));
         const w = Math.max(0, stop - at);
         if (line.x + w > line.avail && line.items.length) { newLine(); continue; }
         line.items.push({ ...t, w, x: line.x });

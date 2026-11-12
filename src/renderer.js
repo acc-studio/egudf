@@ -28,6 +28,7 @@ import { isWordHtml, wordPackage, pasteDocx } from './interop/paste.js';
 import { paragraphDialog, fontDialog } from './worddialogs.js';
 import { tableDialog } from './tabledialog.js';
 import { uyapifyDoc, uyapifyBlocks } from './udf/uyapify.js';
+import { lineFactor } from './fontmetrics.js';
 import { layoutTabsDom } from './editor/tabs.js';
 import { footnotesOf } from './editor/footnote.js';
 import { findBookmark } from './editor/bookmark.js';
@@ -115,7 +116,7 @@ function fitHeaderFooter(tab, g) {
     m.innerHTML = `<div class="${cls}" style="position:static;width:${g.pageW - g.left - g.right}px">${htmlStr}</div>`;
     const el = m.firstElementChild;
     for (const img of el.querySelectorAll('img')) if (!img.complete) img.addEventListener('load', () => { applyGeometry(tab); tab.editor.commands.repaginate(); }, { once: true });
-    layoutTabsDom(el, tab.meta.defaultTab || 36);
+    layoutTabsDom(el, tab.meta.defaultTab || 36, tab.format !== 'docx');
     const hgt = el.offsetHeight;
     m.innerHTML = '';
     return hgt;
@@ -133,11 +134,6 @@ function fitHeaderFooter(tab, g) {
 }
 
 /** Single line height / font size, from the fonts' hhea metrics (what Word uses). */
-function lineFactor(family) {
-  const f = String(family || '').toLowerCase();
-  const T = { calibri: 1.2207, 'calibri light': 1.2207, cambria: 1.1719, aptos: 1.2, arial: 1.1499, 'times new roman': 1.1499, georgia: 1.1362, verdana: 1.2153, tahoma: 1.2075, 'segoe ui': 1.3301, garamond: 1.1265, 'book antiqua': 1.1704, 'courier new': 1.1328, 'century gothic': 1.2251, 'trebuchet ms': 1.1641, helvetica: 1.1499, 'arial narrow': 1.1499, candara: 1.2207, constantia: 1.2207, corbel: 1.2207 };
-  return T[f] || 1.15;
-}
 
 // ---- footnotes at the page bottom (Word documents)
 const FN_SEP = 10; // px: separator line + gap above the first footnote
@@ -182,6 +178,7 @@ function newTab({ title, path = null, doc, meta, original = null, sig = null, re
     getLayout: () => ({ pageH: tab.geom.pageH, top: tab.geom.top, firstTop: tab.geom.firstTop, bottom: tab.geom.bottom, gap: GAP, sheet: tab.sheet, wordRules: tab.format === 'docx', fnHeight: (node) => footnoteHeight(tab, node), fnSep: FN_SEP, gap: gapOf(tab) }),
     onLayout: (L) => drawOverlay(tab, L),
     defaultTab: () => tab.meta.defaultTab || 36,
+    uyapTabs: () => tab.format !== 'docx',
     onUpdate: (_e, tr) => onDocChange(tab, tr),
     onSelection: () => { if (tab === app.active) scheduleUI(); },
     onPaste: (e) => {
@@ -330,7 +327,7 @@ function drawOverlay(tab, L) {
     }
   }
   tab.overlay.innerHTML = html;
-  if (/\t/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36);
+  if (/\t/.test(hHtml + fHtml)) layoutTabsDom(tab.overlay, tab.meta.defaultTab || 36, tab.format !== 'docx');
   // Word tables: header rows repeated at the top of each page the table continues on
   L.spacers.forEach((s, i) => {
     if (!s.rep) return;

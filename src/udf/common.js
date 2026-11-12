@@ -83,6 +83,22 @@ export function uyapLevelType(kind, level, ownType, secType) {
 }
 
 /** A style UYAP can draw, nearest to `type` (for writing UDF). */
+/**
+ * Moves every stop of a TabSet by d pt. UYAP (Swing) measures tab stops from the
+ * paragraph's LeftIndent; egUDF's model, like Word, from the text column. The
+ * codec adds LeftIndent on read and subtracts it on write. (Verified in
+ * Doküman Editörü 5.4.20: LeftIndent 72 + stop 144 draws at 216; negative stops
+ * work and reach into the hanging first line.)
+ */
+export function shiftTabSet(tabSet, d) {
+  if (!tabSet || !d) return tabSet || null;
+  return String(tabSet).split(',').map((t) => {
+    const [p, ...rest] = t.split(':');
+    const v = parseFloat(p);
+    return Number.isFinite(v) ? [String(Math.round((v + d) * 1000) / 1000), ...rest].join(':') : t;
+  }).join(',');
+}
+
 export function uyapListType(kind, type) {
   const t = canonicalListType(type);
   if (kind === 'bullet') {
