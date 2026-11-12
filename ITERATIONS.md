@@ -806,3 +806,14 @@ match UYAP on all seven test documents: single, 1.5 and double spacing; 11,
 tables; headings with spacing. Word documents keep Word's rules.
 
 - **Testing:** new smoke step `udfpitch` pins the eight measured pitches.
+
+## 0.29.0: Word section breaks start a new page (iteration 28)
+
+- **Section breaks** (in 21 of the 343 documents) were ignored, so an annex or
+  a new part ran on directly from the previous page. A "next page" (or
+  odd/even page) section break now starts the following text on a new page, as
+  in Word; "continuous" ones don't. Checked against Word with a document mixing
+  both. Different headers or orientation per section are still not supported,
+  and egUDF still says so when such a file opens.
+- **Checked, no change needed:** pictures in a .udf appear in UYAP at exactly
+  their stored size, the same as in egUDF.

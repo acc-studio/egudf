@@ -784,11 +784,18 @@ export function importDocx(bytes, opts = {}) {
     const out = [];
     const ctx = []; // contextualSpacing bookkeeping, parallel to out
     const add = (nodes, info) => { for (const n of nodes) { out.push(n); ctx.push(info); } };
+    let newPage = false; // the previous paragraph ended a section that starts on a new page
     for (const el of kids(container)) {
       if (el.localName === 'p') {
         const r = parseParagraph(el, rels, tblStyle);
+        if (newPage && r.nodes[0]) { r.nodes[0].attrs.pageBreakBefore = true; newPage = false; }
         add(r.nodes, r.info);
-      } else if (el.localName === 'tbl') add([parseTable(el, rels, maxTw)], null);
+        // a section break that starts the next section on a new page (Word's default "next page")
+        if (nextSection.has(el) && nextSection.get(el) !== 'continuous') newPage = true;
+      } else if (el.localName === 'tbl') {
+        if (newPage) { add([{ type: 'paragraph', attrs: { ...defaultParaAttrs(), pageBreakBefore: true } }], null); newPage = false; }
+        add([parseTable(el, rels, maxTw)], null);
+      }
       else if (el.localName === 'sdt') add(parseBlocks(kid(el, 'sdtContent'), rels, maxTw, tblStyle), null);
       else if (['ins', 'del', 'customXml', 'smartTag'].includes(el.localName)) add(parseBlocks(el, rels, maxTw, tblStyle), null);
     }
@@ -1048,6 +1055,14 @@ export function importDocx(bytes, opts = {}) {
   }
 
   const body = kid(docDom.documentElement, 'body');
+  // section breaks: a sectPr says how *its* section starts, so the break after a
+  // section-ending paragraph takes the type of the next sectPr (or the body's last)
+  const nextSection = new Map();
+  {
+    const ends = kids(body).filter((e) => e.localName === 'p' && kid(kid(e, 'pPr'), 'sectPr'));
+    const types = [...ends.map((e) => kid(kid(e, 'pPr'), 'sectPr')), kid(body, 'sectPr')].map((sp) => wa(kid(sp, 'type'), 'val') || 'nextPage');
+    ends.forEach((e, i) => nextSection.set(e, types[i + 1]));
+  }
   const content = parseBlocks(body, docRels);
   if (!content.length) content.push({ type: 'paragraph', attrs: defaultParaAttrs() });
 
