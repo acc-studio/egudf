@@ -4,6 +4,12 @@ A modern editor for UYAP documents (`.udf`), built so a Turkish lawyer never has
 
 It is the sibling of [egPDF](https://github.com/acc-studio/egpdf): same Electron + esbuild stack, same design tokens, and the same UDF→PDF layout engine, so a document exported or printed here looks exactly like it does in egPDF.
 
+## Download
+
+**[⬇ egUDF for Windows (latest)](https://github.com/acc-studio/egudf/releases/latest/download/egUDF-Setup.exe)** · [All releases and what changed](https://github.com/acc-studio/egudf/releases)
+
+Run the installer once. Installed copies check GitHub Releases and update themselves; *Dosya → Güncellemeleri denetle* checks on demand.
+
 ## What it does
 
 | | |
